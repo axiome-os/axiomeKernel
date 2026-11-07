@@ -1,10 +1,13 @@
 REPO_ROOT := $(realpath ..)
 BUILD_DIR := $(REPO_ROOT)/build/kernel
 
-CC      := $(HOME)/opt/cross/bin/x86_64-elf-gcc
-CXX     := $(HOME)/opt/cross/bin/x86_64-elf-g++
-AS      := $(HOME)/opt/cross/bin/x86_64-elf-as
-LD      := $(HOME)/opt/cross/bin/x86_64-elf-ld
+# Tool locations are overridable via environment or command line, e.g.:
+#   make CROSS_PREFIX=/opt/axiome/cross/bin
+CROSS_PREFIX ?= $(HOME)/opt/cross/bin
+CC      ?= $(CROSS_PREFIX)/x86_64-elf-gcc
+CXX     ?= $(CROSS_PREFIX)/x86_64-elf-g++
+AS      ?= $(CROSS_PREFIX)/x86_64-elf-as
+LD      ?= $(CROSS_PREFIX)/x86_64-elf-ld
 
 CFLAGS  = -ffreestanding -nostdlib -nostartfiles
 CFLAGS += -mno-red-zone -mcmodel=kernel -mno-mmx -mno-sse -mno-sse2

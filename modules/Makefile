@@ -1,8 +1,10 @@
 REPO_ROOT := $(realpath ../..)
 
-# Cross-compiler (same toolchain the kernel is built with).
-CC := $(HOME)/opt/cross/bin/x86_64-elf-gcc
-LD := $(HOME)/opt/cross/bin/x86_64-elf-ld
+# Tool locations are overridable via environment or command line, e.g.:
+#   make CROSS_PREFIX=/opt/axiome/cross/bin
+CROSS_PREFIX ?= $(HOME)/opt/cross/bin
+CC := $(CROSS_PREFIX)/x86_64-elf-gcc
+LD := $(CROSS_PREFIX)/x86_64-elf-ld
 
 # Modules are freestanding, position-independent in practice via the large
 # code model: every cross-module reference is a 64-bit absolute relocation,
