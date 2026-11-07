@@ -36,6 +36,9 @@ public:
                       uint32_t src_pitch_px) = 0;
     /* Push staged pixels to the scanout surface (GOP: WC flush + sfence). */
     virtual void present() = 0;
+    /* Page-flip: make `resource_id` the new scanout without a CPU blit.
+       Returns false when the backend cannot flip (falls back to present()). */
+    virtual bool flip(uint32_t resource_id) { (void)resource_id; return false; }
     /* Optional extended primitives: default CPU fallback (manager implements). */
     virtual bool present_rect(const GfxRect &r) { (void)r; present(); return true; }
     virtual void alpha_blend(const GfxRect &r, uint32_t rgb, uint8_t alpha) { (void)r; (void)rgb; (void)alpha; }

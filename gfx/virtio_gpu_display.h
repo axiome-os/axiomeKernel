@@ -22,6 +22,7 @@ public:
     void blit(const GfxRect &dst, const uint32_t *src,
                uint32_t src_pitch_px) override;
     void present() override;
+    bool flip(uint32_t resource_id) override;
     void *cpu_base() override { return fb_; }
     uint32_t fb_width() const override { return cur_.width; }
     uint32_t fb_height() const override { return cur_.height; }

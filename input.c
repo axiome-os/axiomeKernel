@@ -16,7 +16,7 @@
 #include "framebuffer.h"
 #include <stddef.h>
 
-#define INPUT_DEPTH 256
+#define INPUT_DEPTH 1024
 
 static struct axinput_event g_queue[INPUT_DEPTH];
 static volatile int g_head, g_tail;

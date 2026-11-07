@@ -241,6 +241,13 @@ bool DisplayManager::present_rect(const GfxRect &r)
     return true;
 }
 
+bool DisplayManager::flip(uint32_t resource_id)
+{
+    if (!active_)
+        return false;
+    return active_->flip(resource_id);
+}
+
 GfxCaps DisplayManager::caps() const
 {
     if (active_)
@@ -373,7 +380,7 @@ extern "C" void gfx_init(void)
           m.properties().disable_mask = gfx::GFX_DRIVER_INTEL | gfx::GFX_DRIVER_VIRTIO;
         Leave as-is for normal operation. */
     // m.properties().disable_drivers = true;
-    m.properties().disable_mask = gfx::GFX_DRIVER_VIRTIO;
+    m.properties().disable_mask = gfx::GFX_DRIVER_VIRTIO | gfx::GFX_DRIVER_INTEL | gfx::GFX_DRIVER_BOCHS;
 
     /* Apply cmdline overrides (e.g. add "gfx.disable=virtio,intel" to
         bootloader cmdline) – runs before registration so select_best()
@@ -444,6 +451,11 @@ extern "C" int gfx_present_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
     gfx::GfxRect r;
     r.x = x; r.y = y; r.w = w; r.h = h;
     return gfx::display_manager().present_rect(r) ? 0 : -1;
+}
+
+extern "C" int gfx_flip(uint32_t resource_id)
+{
+    return gfx::display_manager().flip(resource_id) ? 0 : -1;
 }
 
 extern "C" int gfx_caps(uint64_t *out_bits)

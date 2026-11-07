@@ -24,6 +24,7 @@
 #include "signal.h"
 #include "idt.h"
 #include "acpi.h"
+#include "gfx/manager.h"
 
 /* SEEK_* whence constants (must match userspace libc/syscall.h). */
 #define SEEK_SET 0
@@ -272,6 +273,13 @@ static uint64_t sys_poweroff(uint64_t a1, uint64_t a2, uint64_t a3,
         ;
 }
 
+static uint64_t sys_gfx_flip(uint64_t a1, uint64_t a2, uint64_t a3,
+                             uint64_t a4, uint64_t a5)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    return (uint64_t)gfx_flip((uint32_t)a1);
+}
+
 static void con_putchar(char c)
 {
     if (fb_active())
@@ -431,6 +439,8 @@ static uint64_t sys_read(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uin
         struct pipe *p = (struct pipe *)f->node->priv;
         while (p->count == 0)
         {
+            if (f->flags & O_NONBLOCK)
+                return (uint64_t)-EAGAIN;
             if (p->nwriters == 0)
                 return 0; /* EOF */
             p->wait_reader = sched_current();
@@ -1948,7 +1958,7 @@ static uint64_t sys_ipc_recv(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
 /* ---- shared memory (Phase 11) ---- */
 #define SHM_MAX 16
 #define SHM_BASE 0x50000000000ULL
-#define SHM_SLOT 0x200000ULL
+#define SHM_SLOT 0x800000ULL
 
 struct shm_obj {
     int id;
@@ -2005,6 +2015,48 @@ static uint64_t sys_shm_attach(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
             return (uint64_t)(-1);
     }
     return va;
+}
+
+static uint64_t sys_shm_destroy(uint64_t a1, uint64_t a2, uint64_t a3,
+                                uint64_t a4, uint64_t a5)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    int id = (int)a1;
+    for (int i = 0; i < SHM_MAX; i++)
+    {
+        if (g_shm[i].used && g_shm[i].id == id)
+        {
+            pmm_free_frames(g_shm[i].phys, g_shm[i].pages);
+            g_shm[i].used = 0;
+            g_shm[i].id = 0;
+            g_shm[i].phys = 0;
+            g_shm[i].pages = 0;
+            return 0;
+        }
+    }
+    return (uint64_t)(-1);
+}
+
+static uint64_t sys_fcntl(uint64_t a1, uint64_t a2, uint64_t a3,
+                          uint64_t a4, uint64_t a5)
+{
+    (void)a4; (void)a5;
+    int fd = (int)a1;
+    int cmd = (int)a2;
+    int arg = (int)a3;
+    vfs_ensure_proc();
+    struct thread *t = sched_current();
+    if (fd < 0 || fd >= MAX_FD || !t->fds[fd].used)
+        return (uint64_t)-1;
+    struct vfs_file *f = &t->fds[fd];
+    if (cmd == F_GETFL)
+        return (uint64_t)f->flags;
+    if (cmd == F_SETFL)
+    {
+        f->flags = arg;
+        return 0;
+    }
+    return (uint64_t)-1;
 }
 
 /* ---- time syscalls ---- */
@@ -2237,6 +2289,12 @@ static syscall_fn syscall_table[] = {
     /* system power control */
     [SYS_REBOOT]        = sys_reboot,
     [SYS_POWEROFF]      = sys_poweroff,
+    /* page-flip scanout (virtio-gpu) */
+    [SYS_GFX_FLIP]      = sys_gfx_flip,
+    /* shared memory destroy */
+    [SYS_SHM_DESTROY]   = sys_shm_destroy,
+    /* file descriptor control */
+    [SYS_FCNTL]         = sys_fcntl,
 };
 
 /* ABI guard (issue #33): the table must cover every number defined in the

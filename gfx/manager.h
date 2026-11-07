@@ -36,6 +36,7 @@ public:
     void fill_rect(const GfxRect &r, uint32_t rgb);
     void present();
     bool present_rect(const GfxRect &r);
+    bool flip(uint32_t resource_id);
     GfxCaps caps() const;
     uint64_t caps_bits() const;
     const char *detail_mode() const;
@@ -71,6 +72,7 @@ void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                    uint32_t rgb);
 void gfx_present(void);
 int gfx_present_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+int gfx_flip(uint32_t resource_id);
 int gfx_mode(uint32_t *w, uint32_t *h, uint32_t *pitch, uint32_t *bpp);
 void *gfx_cpu_base(void);
 /* Caps query (capability flags). Returns 0 on success. */

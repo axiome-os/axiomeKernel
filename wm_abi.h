@@ -39,8 +39,9 @@
 
 #define WM_MAGIC 0x57494E44u /* "WIND" */
 
-#define WM_EV_KEY   1u
-#define WM_EV_MOUSE 2u
+#define WM_EV_KEY    1u
+#define WM_EV_MOUSE  2u
+#define WM_EV_RESIZE 3u /* window content size changed (x=new w, y=new h) */
 
 struct wm_event {
     uint32_t type; /* WM_EV_* */
@@ -81,9 +82,10 @@ struct wm_win_hdr {
     volatile uint64_t gfx_caps;   /* GfxCap bitmask */
     volatile uint32_t gfx_detail; /* 0=simplified 1=detailed */
     uint32_t pad2;
+    uint32_t pitch;   /* physical row stride of the SHM pixel buffer (bytes) */
 };
 
-#define WM_HDR_SIZE 48u
+#define WM_HDR_SIZE 56u
 
 static inline int wm_has_cap(const struct wm_win_hdr *hdr, uint64_t cap)
 {
@@ -95,11 +97,17 @@ static inline const char *wm_detail_mode(const struct wm_win_hdr *hdr)
     return hdr->gfx_detail ? "detailed" : "simplified";
 }
 
-/* Fixed client geometry: every window slot carries this many pixels, so the
-   compositor can pre-allocate its SHM pool once (and a client buffer always
-   fits one SHM_SLOT of 2 MiB). Windows are draggable but not resizable. */
-#define WM_WIN_W 620u
-#define WM_WIN_H 420u
+/* Window geometry limits. SHM slots are pre-allocated at WM_SHM_MAX_W x
+   WM_SHM_MAX_H (see compositor.h); clients are spawned with WM_WIN_W x
+   WM_WIN_H as the advertised size and receive WM_EV_RESIZE when the user
+   drags an edge. Windows are draggable and resizable within
+   [WM_SHM_MIN_W/H, WM_SHM_MAX_W/H]. */
+#define WM_WIN_W 620u   /* default initial width */
+#define WM_WIN_H 420u   /* default initial height */
+#define WM_SHM_MIN_W 200u
+#define WM_SHM_MIN_H 120u
+#define WM_SHM_MAX_W 1200u
+#define WM_SHM_MAX_H 900u
 #define WM_MAX_WIN 6u
 
 #endif

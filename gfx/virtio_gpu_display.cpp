@@ -496,6 +496,35 @@ void VirtioGpuDisplay::blit(const GfxRect &dst, const uint32_t *src,
     }
 }
 
+bool VirtioGpuDisplay::flip(uint32_t resource_id)
+{
+    if (!ready_)
+        return false;
+    struct virtio_gpu_set_scanout cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.hdr.ctx_id = 0;
+    cmd.hdr.ring_idx = 0;
+    cmd.r.x = 0;
+    cmd.r.y = 0;
+    cmd.r.width = cur_.width;
+    cmd.r.height = cur_.height;
+    cmd.scanout_id = 0;
+    cmd.resource_id = resource_id;
+
+    struct virtio_gpu_ctrl_hdr resp;
+    int r = virtio_gpu_submit(virtio_gpu_dev(), &cmd, sizeof(cmd),
+                                &resp, sizeof(resp), 1000);
+    if (r < 0) {
+        printk("virtio-gpu: flip to resource %u failed %d\n", resource_id, r);
+        return false;
+    }
+    fb_resource_id_ = resource_id;
+    printk("virtio-gpu: flipped scanout -> resource %u\n", resource_id);
+    return true;
+}
+
 void VirtioGpuDisplay::present()
 {
     present_flush();
