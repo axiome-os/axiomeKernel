@@ -354,16 +354,13 @@ void driver_init(void)
     t->ops.read = tty_read; t->ops.write = tty_write;
     device_register(t);
 
-    /* DRI render node for Mesa softpipe (no PCI dependence). */
-    dri_init();
-
     /* DRM/KMS/GEM core: registers /dev/dri/card0, wraps GOP as KMS device. */
     drm_init();
 
     /* AXW display protocol device: /devices/axw0 */
     axw_dev_init();
 
-    /* Unified GUI input queue (keyboard + mouse for axwm/axterm). */
+    /* Unified GUI input queue (keyboard + mouse for GUI clients). */
     input_init();
 
     printk("DRV: framework initialized\n");

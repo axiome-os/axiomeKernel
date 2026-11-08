@@ -67,7 +67,7 @@ typedef uint64_t (*syscall_fn)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t)
    NULL / wild / unmapped pointer returns -EFAULT instead of faulting or being
    silently demand-mapped by the page-fault handler. */
 
-static int user_range_ok(uint64_t uptr, size_t n, int write)
+int user_range_ok(uint64_t uptr, size_t n, int write)
 {
     if (n == 0)
         return 1;
@@ -82,7 +82,7 @@ static int user_range_ok(uint64_t uptr, size_t n, int write)
     return vmm_check_user_range(root, uptr, n, write);
 }
 
-static long copy_to_user(void *dst, const void *src, size_t n)
+long copy_to_user(void *dst, const void *src, size_t n)
 {
     if (n == 0)
         return 0;
@@ -92,7 +92,7 @@ static long copy_to_user(void *dst, const void *src, size_t n)
     return 0;
 }
 
-static long copy_from_user(void *dst, const void *src, size_t n)
+long copy_from_user(void *dst, const void *src, size_t n)
 {
     if (n == 0)
         return 0;

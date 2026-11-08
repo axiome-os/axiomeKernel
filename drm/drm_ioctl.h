@@ -137,8 +137,8 @@ struct drm_gem_create {
 /* ---- GEM_MMAP: get mmap offset for handle ---- */
 struct drm_gem_mmap {
     uint32_t handle;
-    uint32_t offset;             /* out */
-    uint64_t size;               /* out */
+    uint64_t offset;   /* out: (handle << 32) | byte_off, passed to mmap() */
+    uint64_t size;     /* out */
 };
 
 /* ---- GEM_FREE ---- */

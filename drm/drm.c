@@ -14,6 +14,7 @@
 #include "framebuffer.h"
 #include "gfx/manager.h"
 #include "sched.h"
+#include "syscall.h"
 #include <stddef.h>
 
 /* ---- global DRM device (single card, GOP-backed) ---- */
@@ -238,17 +239,17 @@ static long drm_ioctl_gem_create(struct drm_file *file, void *arg)
 
 static long drm_ioctl_gem_mmap(struct drm_file *file, void *arg)
 {
-    (void)file;
     struct drm_gem_mmap *req = (struct drm_gem_mmap *)arg;
     if (!req || !g_drm_dev)
         return -1;
-    struct drm_gem_object *gem = 0;
-    /* find gem by handle */
-    for (int i = 0; i < DRM_MAX_FILES; i++) { (void)i; }
-    /* Simple linear search: we don't have a global gem table yet.
-       For now, store gems in the drm_device. */
-    (void)gem;
-    return -1;
+    /* Offset encoding: high 32 bits = GEM handle, low 32 = byte offset.
+       drm_sys_mmap() decodes this and maps the gem pages userside. */
+    struct drm_gem_object *gem = drm_gem_lookup_handle(g_drm_dev, req->handle);
+    if (!gem)
+        return -1;
+    req->offset = ((uint64_t)req->handle << 32);
+    req->size = gem->size;
+    return 0;
 }
 
 static long drm_ioctl_gem_free(struct drm_file *file, void *arg)
@@ -466,7 +467,18 @@ long drm_sys_ioctl(int fd, uint32_t op, void *arg)
     (void)fd;
     if (!g_drm_dev)
         return -1;
-    return drm_ioctl(0, op, arg);
+    if (!arg)
+        return drm_ioctl(0, op, 0);
+    /* ioctl arguments live in userspace; copy into a kernel buffer so the
+       ioctl handlers (which expect kernel pointers) operate on safe memory,
+       then copy any in/out results back. */
+    uint8_t buf[64];
+    if (copy_from_user(buf, arg, sizeof(buf)) < 0)
+        return -1;
+    long r = drm_ioctl(0, op, buf);
+    if (r >= 0)
+        copy_to_user(arg, buf, sizeof(buf));
+    return r;
 }
 
 void *drm_sys_cpu_base(void)

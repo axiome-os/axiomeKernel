@@ -1,6 +1,7 @@
 #ifndef AXIOME_SYSCALL_H
 #define AXIOME_SYSCALL_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /*
@@ -36,6 +37,11 @@ struct utsname {
 void syscall_init(void);
 uint64_t syscall_dispatch(uint64_t n, uint64_t a1, uint64_t a2, uint64_t a3,
                           uint64_t a4, uint64_t a5);
+
+/* Validated userspace access (copy-in / copy-out). See kernel/syscall.c. */
+int user_range_ok(uint64_t uptr, size_t n, int write);
+long copy_from_user(void *dst, const void *src, size_t n);
+long copy_to_user(void *dst, const void *src, size_t n);
 
 extern uint64_t current_kstack_top;
 
