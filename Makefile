@@ -11,6 +11,7 @@ LD      ?= $(CROSS_PREFIX)/x86_64-elf-ld
 
 CFLAGS  = -ffreestanding -nostdlib -nostartfiles
 CFLAGS += -mno-red-zone -mcmodel=kernel -mno-mmx -mno-sse -mno-sse2
+CFLAGS += -fno-PIC -fno-pie
 CFLAGS += -O2 -g -pipe
 CFLAGS += -Wall -Wextra -Wpedantic
 CFLAGS += -I$(REPO_ROOT) -I$(REPO_ROOT)/kernel -I$(REPO_ROOT)/include
@@ -32,6 +33,9 @@ C_SRCS := $(wildcard *.c) $(wildcard arch/x86_64/*.c)
 # into kernel.elf (not .kxt) and register via driver_init(). The define
 # switches their packaging tail from MODULE_INIT to *_driver_init().
 C_SRCS += modules/sata.c modules/nvme.c
+# DRM/KMS/GEM graphics subsystem (wraps GOP).
+C_SRCS += drm/drm.c drm/kms.c drm/gem.c drm/gop_drm.c drm/axw_dev.c
+$(BUILD_DIR)/drm/drm.o $(BUILD_DIR)/drm/kms.o $(BUILD_DIR)/drm/gem.o $(BUILD_DIR)/drm/gop_drm.o $(BUILD_DIR)/drm/axw_dev.o: CFLAGS += -Idrm
 $(BUILD_DIR)/modules/sata.o $(BUILD_DIR)/modules/nvme.o: CFLAGS += -DAXIOME_BUILTIN_DRIVER
 CXX_SRCS := $(wildcard hal/*.cpp) $(wildcard arch/x86_64/hal/*.cpp) $(wildcard gfx/*.cpp)
 ASM_SRCS := $(wildcard arch/x86_64/*.S)

@@ -9,6 +9,8 @@
 #include "sched.h"
 #include "xhci.h"
 #include "input.h"
+#include "drm/drm.h"
+#include "drm/axw_dev.h"
 #include <stddef.h>
 
 static struct driver *g_drivers;
@@ -354,6 +356,12 @@ void driver_init(void)
 
     /* DRI render node for Mesa softpipe (no PCI dependence). */
     dri_init();
+
+    /* DRM/KMS/GEM core: registers /dev/dri/card0, wraps GOP as KMS device. */
+    drm_init();
+
+    /* AXW display protocol device: /devices/axw0 */
+    axw_dev_init();
 
     /* Unified GUI input queue (keyboard + mouse for axwm/axterm). */
     input_init();

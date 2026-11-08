@@ -31,6 +31,7 @@ static void thread_init_vfs(struct thread *t)
         t->fds[i].kind = FD_FREE;
         t->fds[i].node = 0;
         t->fds[i].off = 0;
+        t->fds[i].priv = 0;
     }
     t->cwd[0] = 0;
 
@@ -279,7 +280,8 @@ struct thread *sched_spawn(void (*func)(void*), void *arg, const char *name)
 struct thread *sched_spawn_user_in(struct mmu_root *mmu, void *rip, void *user_rsp,
                          uint64_t rflags, const char *name,
                          uint64_t rbx, uint64_t rbp, uint64_t r12,
-                         uint64_t r13, uint64_t r14, uint64_t r15)
+                         uint64_t r13, uint64_t r14, uint64_t r15,
+                         uint64_t ustack_base, uint64_t ustack_top)
 {
     struct thread *t = kmalloc(sizeof(struct thread));
     if (!t) return 0;
@@ -318,6 +320,8 @@ struct thread *sched_spawn_user_in(struct mmu_root *mmu, void *rip, void *user_r
 
     t->rsp = (uint64_t)rsp;
     t->user_rsp = (uint64_t)user_rsp;
+    t->ustack_base = ustack_base;
+    t->ustack_top = ustack_top;
 
     t->state = THREAD_READY;
     t->priority = 1;

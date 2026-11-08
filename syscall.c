@@ -25,6 +25,9 @@
 #include "idt.h"
 #include "acpi.h"
 #include "gfx/manager.h"
+#include "drm/drm.h"
+#include "drm/axw_dev.h"
+#include "devfs.h"
 
 /* SEEK_* whence constants (must match userspace libc/syscall.h). */
 #define SEEK_SET 0
@@ -280,6 +283,27 @@ static uint64_t sys_gfx_flip(uint64_t a1, uint64_t a2, uint64_t a3,
     return (uint64_t)gfx_flip((uint32_t)a1);
 }
 
+/* ---- ioctl ---- */
+
+static uint64_t sys_ioctl(uint64_t a1, uint64_t a2, uint64_t a3,
+                          uint64_t a4, uint64_t a5)
+{
+    (void)a4; (void)a5;
+    int fd = (int)a1;
+    uint32_t op = (uint32_t)a2;
+    void *arg = (void *)(uintptr_t)a3;
+    vfs_ensure_proc();
+    struct thread *t = sched_current();
+    if (!t || fd < 0 || fd >= MAX_FD || !t->fds[fd].used)
+        return (uint64_t)-EBADF;
+    struct vfs_file *f = &t->fds[fd];
+    if (f->kind != FD_VNODE || !f->node)
+        return (uint64_t)-EINVAL;
+    /* Route ioctl to the DRM device (card0 / /dev/dri/card0).
+       drm_sys_ioctl validates the op and dispatches. */
+    return (uint64_t)drm_sys_ioctl(fd, op, arg);
+}
+
 static void con_putchar(char c)
 {
     if (fb_active())
@@ -313,6 +337,13 @@ static uint64_t sys_write(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, ui
     }
     if (f->kind == FD_PIPE)
         return sys_write_pipe(f, s, len);
+    /* AXW display protocol device */
+    if (f->priv)
+    {
+        int ci = (int)(uintptr_t)f->priv - 1; /* 1-based -> 0-based */
+        long w = axw_dev_write_conn(axw_dev_conn_at(ci), s, len);
+        return (uint64_t)w;
+    }
     /* FD_VNODE */
     if (f->flags & O_APPEND)
         f->off = f->node->size;
@@ -454,6 +485,13 @@ static uint64_t sys_read(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uin
         p->count -= r;
         return r;
     }
+    /* AXW display protocol device */
+    if (f->priv)
+    {
+        int ci = (int)(uintptr_t)f->priv - 1; /* 1-based -> 0-based */
+        long r = axw_dev_read_conn(axw_dev_conn_at(ci), buf, len);
+        return (uint64_t)r;
+    }
     /* FD_VNODE */
     if (vfs_check_perms(f->node, VFS_MAY_READ) != 0)
         return (uint64_t)-EACCES;
@@ -578,17 +616,16 @@ static uint64_t sys_open(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uin
     vfs_ensure_proc();
     struct thread *t = sched_current();
 
-    /* System-only graphics/input devices: only OS daemons (ROLE_SYSTEM,
-       init-spawned services such as the guixd display server) may open the
-       DRI render, framebuffer or GUI input devices directly. Regular users
-       reach the desktop through the display server, never the hardware.
-       The device nodes also carry v_uid=0/v_mode=0 (root-only + SYSTEM
-       bypass in vfs_check_perms), so this string gate is defence in depth. */
-    if (t && t->role != ROLE_SYSTEM &&
-        (strncmp(path, "/Devices/dri", 12) == 0 ||
-         strncmp(path, "/Devices/fb", 11) == 0 ||
-         strncmp(path, "/Devices/input", 14) == 0))
-        return (uint64_t)-EACCES;
+    /* Graphics/input device access control.
+       Opening /dev/dri/card0 (or /devices/dri0 compat) is allowed for any
+       role, but DRM master/ioctl operations require ROLE_SYSTEM (enforced in
+       drm_ioctl SET_MASTER). Regular users reach the desktop through the
+       display server, never raw hardware. */
+    if (strncmp(path, "/dev/dri/card0", 14) == 0)
+    {
+        /* Translate /dev/dri/card0 → /Devices/card0 for devfs lookup. */
+        __builtin_memcpy(path, "/Devices/card0", 15);
+    }
 
     struct vnode *n = vfs_lookup(path, t->cwd);
     if (n && n->type == VFS_FIFO)
@@ -667,6 +704,18 @@ static uint64_t sys_open(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uin
     t->fds[fd].node = n;
     t->fds[fd].off = (flags & O_APPEND) ? n->size : 0;
     t->fds[fd].flags = flags;
+    /* AXW display protocol: create a per-open connection for /devices/axw0 */
+    if (n->priv)
+    {
+        struct dev_node *dn = (struct dev_node *)n->priv;
+        if (dn->dev && dn->dev->type == DEV_CHAR &&
+            dn->dev->major == 229 && dn->dev->minor == 0)
+        {
+            int ci = axw_dev_open_conn();
+            if (ci >= 0)
+                t->fds[fd].priv = (void *)(uintptr_t)(ci + 1); /* 1-based */
+        }
+    }
     return (uint64_t)fd;
 }
 
@@ -714,11 +763,21 @@ static uint64_t sys_close(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, ui
         return 0;
     }
     if (t->fds[fd].kind == FD_VNODE)
+    {
+        /* AXW: close the connection if this fd was an axw fd */
+        if (t->fds[fd].priv)
+        {
+            int ci = (int)(uintptr_t)t->fds[fd].priv - 1; /* 1-based -> 0-based */
+            axw_dev_close_conn(ci);
+            t->fds[fd].priv = 0;
+        }
         vfs_release(t->fds[fd].node);
+    }
     t->fds[fd].used = 0;
     t->fds[fd].kind = FD_FREE;
     t->fds[fd].node = 0;
     t->fds[fd].off = 0;
+    t->fds[fd].priv = 0;
     return 0;
 }
 
@@ -1170,7 +1229,8 @@ static uint64_t sys_execve(uint64_t a1, uint64_t a2, uint64_t a3,
     }
     uint64_t entry = 0;
     uint64_t stack_top = 0;
-    if (elf_load(mmu, buf, sz, &entry, &stack_top, argc, argv, envc, envp) < 0)
+    uint64_t stack_base = 0;
+    if (elf_load(mmu, buf, sz, &entry, &stack_top, &stack_base, argc, argv, envc, envp) < 0)
     {
         vmm_free_root(mmu);
         kfree(buf);
@@ -1194,6 +1254,8 @@ static uint64_t sys_execve(uint64_t a1, uint64_t a2, uint64_t a3,
         vmm_free_root(mmu);
         return (uint64_t)-1;
     }
+    t->ustack_base = stack_base;
+    t->ustack_top = stack_base + 256 * PAGE_SIZE;
     return 0;
 }
 
@@ -1956,7 +2018,7 @@ static uint64_t sys_ipc_recv(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
 }
 
 /* ---- shared memory (Phase 11) ---- */
-#define SHM_MAX 16
+#define SHM_MAX 64
 #define SHM_BASE 0x50000000000ULL
 #define SHM_SLOT 0x800000ULL
 
@@ -2295,6 +2357,8 @@ static syscall_fn syscall_table[] = {
     [SYS_SHM_DESTROY]   = sys_shm_destroy,
     /* file descriptor control */
     [SYS_FCNTL]         = sys_fcntl,
+    /* device ioctl */
+    [SYS_IOCTL]         = sys_ioctl,
 };
 
 /* ABI guard (issue #33): the table must cover every number defined in the

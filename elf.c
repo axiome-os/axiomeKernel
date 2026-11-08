@@ -19,6 +19,10 @@
 #define ELF_MAX_IMAGES 8
 #define ELF_MAX_DEP_NAME 64
 
+/* Initial user-stack pages mapped up front; the rest grows on demand via
+   page-fault handling in isr_handlers.c (demand-paged stack, like Linux). */
+#define INITIAL_STACK_PAGES 16
+
 /* Where on the root partition a DT_NEEDED library (e.g. "libc.sl") may
    live. Tried in order; the image build plants libc.sl under /Libraries. */
 static const char *const elf_lib_dirs[] = { "/Libraries/", "/Binaries/", "/bin/", "/", 0 };
@@ -357,8 +361,8 @@ static int setup_user_stack(uint64_t stack_base, uint64_t stack_pages,
                             uint64_t *stack_top);
 
 int elf_load(struct mmu_root *mmu, const uint8_t *data, size_t size,
-              uint64_t *entry, uint64_t *stack_top, int argc, char **argv,
-              int envc, char **envp)
+              uint64_t *entry, uint64_t *stack_top, uint64_t *stack_base,
+              int argc, char **argv, int envc, char **envp)
 {
     struct elf_image imgs[ELF_MAX_IMAGES];
     memset(imgs, 0, sizeof(imgs));
@@ -412,16 +416,23 @@ int elf_load(struct mmu_root *mmu, const uint8_t *data, size_t size,
             highest = imgs[o].highest;
 
     uint64_t stack_top_ptr = 0;
-    uint64_t stack_base = (highest + 0x10000ULL + 0xFFFULL) & ~0xFFFULL;
-    uint64_t stack_pages = 32;
+    uint64_t stack_guard = (highest + 0x10000ULL + 0xFFFULL) & ~0xFFFULL;
+    uint64_t stack_pages = 256;
 
     /* Guard page: the page below the mapped stack is left unmapped so a
        downward stack overflow faults instead of silently corrupting. */
-    uint64_t stack = stack_base + PAGE_SIZE;
+    uint64_t stack = stack_guard + PAGE_SIZE;
+    uint64_t stack_hi = stack + stack_pages * PAGE_SIZE;
 
-    for (uint64_t p = 0; p < stack_pages; p++)
+    /* Demand-paged stack: only map the top INITIAL_STACK_PAGES pages up
+       front; the rest grows on demand via page-fault handling
+       (isr_handlers.c, int 14, user mode). */
+    uint64_t mapped_lo = stack_hi - INITIAL_STACK_PAGES * PAGE_SIZE;
+    if (mapped_lo < stack)
+        mapped_lo = stack;
+
+    for (uint64_t va = mapped_lo; va < stack_hi; va += PAGE_SIZE)
     {
-        uint64_t va   = stack + p * PAGE_SIZE;
         uint64_t phys = (uint64_t)pmm_alloc_frame();
         if (!phys)
         {
@@ -440,6 +451,7 @@ int elf_load(struct mmu_root *mmu, const uint8_t *data, size_t size,
         goto fail;
 
     *stack_top = stack_top_ptr;
+    *stack_base = stack;   /* lowest mappable user stack page */
 
     vmm_switch(saved);
     return 0;
@@ -529,8 +541,8 @@ int exec_user_program(const uint8_t *elf, size_t size, const char *name)
     }
     char *av[1];
     av[0] = (char *)name;
-    uint64_t entry, stack_top;
-    if (elf_load(mmu, elf, size, &entry, &stack_top, 1, av, 0, 0) < 0)
+    uint64_t entry, stack_top, stack_base;
+    if (elf_load(mmu, elf, size, &entry, &stack_top, &stack_base, 1, av, 0, 0) < 0)
     {
         printk("EXEC: failed to load ELF '%s'\n", name);
         vmm_free_root(mmu);
@@ -539,7 +551,8 @@ int exec_user_program(const uint8_t *elf, size_t size, const char *name)
     printk("EXEC: loaded '%s' entry=0x%lx stack=0x%lx\n",
             name, entry, stack_top);
     struct thread *t = sched_spawn_user_in(mmu, (void *)entry, (void *)stack_top,
-                                           0x202, name, 0, 0, 0, 0, 0, 0);
+                                           0x202, name, 0, 0, 0, 0, 0, 0,
+                                           stack_base, stack_base + 256 * PAGE_SIZE);
     if (t)
         sched_mark_init(t);
     return 0;
@@ -551,14 +564,15 @@ int spawn_process_with_args(const uint8_t *elf, size_t size, const char *name,
     struct mmu_root *mmu = vmm_new_user_root();
     if (!mmu)
         return -1;
-    uint64_t entry, stack_top;
-    if (elf_load(mmu, elf, size, &entry, &stack_top, argc, argv, 0, 0) < 0)
+    uint64_t entry, stack_top, stack_base;
+    if (elf_load(mmu, elf, size, &entry, &stack_top, &stack_base, argc, argv, 0, 0) < 0)
     {
         vmm_free_root(mmu);
         return -1;
     }
     struct thread *t = sched_spawn_user_in(mmu, (void *)entry, (void *)stack_top, 0x202,
-                                            name, 0, 0, 0, 0, 0, 0);
+                                            name, 0, 0, 0, 0, 0, 0,
+                                            stack_base, stack_base + 256 * PAGE_SIZE);
     return t ? (int)t->pid : -1;
 }
 
@@ -574,7 +588,8 @@ int fork_process(uint64_t rip, uint64_t rsp, uint64_t rflags,
         return -1;
     struct thread *t = sched_spawn_user_in(mmu, (void *)(uintptr_t)rip,
                                             (void *)(uintptr_t)rsp, rflags, cur->name,
-                                            rbx, rbp, r12, r13, r14, r15);
+                                            rbx, rbp, r12, r13, r14, r15,
+                                            cur->ustack_base, cur->ustack_top);
     if (t)
     {
         /* Inherit signal dispositions (pending cleared) and IPC channels. */

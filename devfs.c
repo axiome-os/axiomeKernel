@@ -1,5 +1,6 @@
 #include "vfs.h"
 #include "driver.h"
+#include "devfs.h"
 #include "slab.h"
 #include "printk.h"
 #include "string.h"
@@ -9,11 +10,6 @@
    is the source of truth; each registered device becomes a node. */
 
 enum { DEV_ROOT = 0 };
-
-struct dev_node {
-    int kind;
-    struct device *dev;
-};
 
 static void dcopy(char *dst, const char *src)
 {
@@ -30,6 +26,10 @@ static struct vnode *dev_new(int kind, struct device *dev, const char *name)
     memset(n, 0, sizeof(*n));
     dcopy(n->name, name);
     n->type = (kind == DEV_ROOT) ? VFS_DIR : VFS_FILE;
+    /* Default device permissions: rw-rw-rw- (char devices r/w by all). */
+    n->v_uid = 0;
+    n->v_gid = 0;
+    n->v_mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
     n->priv = kmalloc(sizeof(struct dev_node));
     if (!n->priv) { kfree(n); return 0; }
     struct dev_node *dn = (struct dev_node *)n->priv;

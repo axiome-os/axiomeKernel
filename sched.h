@@ -20,6 +20,8 @@ struct thread {
     uint64_t kstack_top;
     struct mmu_root *mmu;
     uint64_t user_rsp;
+    uint64_t ustack_base;   /* lowest mappable user stack page */
+    uint64_t ustack_top;    /* one-past-highest user stack address */
     int pid;
     int parent_pid;
     int exit_status;
@@ -74,7 +76,8 @@ struct thread *sched_spawn(void (*func)(void*), void *arg, const char *name);
 struct thread *sched_spawn_user_in(struct mmu_root *mmu, void *rip, void *user_rsp,
                           uint64_t rflags, const char *name,
                           uint64_t rbx, uint64_t rbp, uint64_t r12,
-                          uint64_t r13, uint64_t r14, uint64_t r15);
+                          uint64_t r13, uint64_t r14, uint64_t r15,
+                          uint64_t ustack_base, uint64_t ustack_top);
 int sched_set_current_image(struct mmu_root *mmu, void *rip, void *user_rsp,
                             uint64_t rflags, const char *name);
 void sched_yield(void);

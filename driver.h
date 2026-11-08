@@ -66,4 +66,8 @@ void nvme_driver_init(void);
    always registered so softpipe has a target once GOP is live. */
 void dri_init(void);
 
+/* DRM/KMS/GEM core (kernel/drm/drm.c). Wraps GOP as a KMS device,
+   registers /dev/dri/card0. */
+int drm_init(void);
+
 #endif

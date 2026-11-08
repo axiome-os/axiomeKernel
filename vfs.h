@@ -120,6 +120,7 @@ struct vfs_file {
     struct vnode *node;
     size_t off;
     int flags;      /* open-time flags (O_APPEND handled per-write) */
+    void *priv;     /* per-open private data (e.g. axw connection) */
 };
 
 /* Directory entry returned to userspace. */

@@ -291,6 +291,10 @@ static int apply_one(struct elf_object *obj, const struct elf64_rela *rel,
         place(target, di->base + (uint64_t)rel->r_addend, ctx);
         return 0;
 
+    case R_X86_64_COPY:
+        /* Zero-initialized BSS targets need no copy. */
+        return 0;
+
     case R_X86_64_GLOB_DAT:
     case R_X86_64_JUMP_SLOT:
     case R_X86_64_64:

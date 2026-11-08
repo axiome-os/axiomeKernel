@@ -66,6 +66,7 @@ struct elf64_rela {
 
 /* x86-64 relocations understood by the loader. */
 #define R_X86_64_64        1
+#define R_X86_64_COPY      5
 #define R_X86_64_GLOB_DAT  6
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_RELATIVE  8
@@ -133,8 +134,8 @@ struct elf64_shdr {
 struct mmu_root;
 
 int elf_load(struct mmu_root *mmu, const uint8_t *data, size_t size,
-              uint64_t *entry, uint64_t *stack_top, int argc, char **argv,
-              int envc, char **envp);
+              uint64_t *entry, uint64_t *stack_top, uint64_t *stack_base,
+              int argc, char **argv, int envc, char **envp);
 
 int exec_user_program(const uint8_t *elf, size_t size, const char *name);
 int spawn_process_with_args(const uint8_t *elf, size_t size, const char *name,

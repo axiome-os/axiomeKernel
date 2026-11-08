@@ -40,6 +40,32 @@ void isr_handler(struct isr_frame *frame)
 {
     if (frame->int_no < 32)
     {
+        /* Demand-paged user stack growth: handle page faults within the
+           user stack range silently, before any exception output. */
+        if (frame->int_no == 14)
+        {
+            unsigned long cr2 = (unsigned long)hal_cpu_fault_address();
+            int user = (frame->cs & 3) != 0;
+            if (user)
+            {
+                struct thread *t = sched_current();
+                if (t && cr2 >= t->ustack_base && cr2 < t->ustack_top)
+                {
+                    uint64_t page = cr2 & ~0xFFFULL;
+                    uint64_t phys = (uint64_t)pmm_alloc_frame();
+                    if (phys)
+                    {
+                        if (vmm_map_page_in(t->mmu, page, phys,
+                                            MMU_USER | MMU_WRITE | MMU_NX) == 0)
+                        {
+                            return;
+                        }
+                        pmm_free_frame((void *)phys);
+                    }
+                }
+            }
+        }
+
         const char *name = exception_names[frame->int_no];
         if (!name)
             name = "(unknown)";
