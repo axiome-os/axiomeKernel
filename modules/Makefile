@@ -3,8 +3,14 @@ REPO_ROOT := $(realpath ../..)
 # Tool locations are overridable via environment or command line, e.g.:
 #   make CROSS_PREFIX=/opt/axiome/cross/bin
 CROSS_PREFIX ?= $(HOME)/opt/cross/bin
+# Only fall back to the local cross toolchain when CC/LD are not supplied by
+# the parent build (exported env) or the command line.
+ifeq ($(filter command line environment override,$(origin CC)),)
 CC := $(CROSS_PREFIX)/x86_64-elf-gcc
+endif
+ifeq ($(filter command line environment override,$(origin LD)),)
 LD := $(CROSS_PREFIX)/x86_64-elf-ld
+endif
 
 # Modules are freestanding, position-independent in practice via the large
 # code model: every cross-module reference is a 64-bit absolute relocation,
