@@ -9,6 +9,7 @@
 #include "pmm.h"
 #include "sched.h"
 #include "signal.h"
+#include "string.h"
 #include "hal/cshim.h"
 
 static const char *exception_names[] = {
@@ -55,6 +56,10 @@ void isr_handler(struct isr_frame *frame)
                     uint64_t phys = (uint64_t)pmm_alloc_frame();
                     if (phys)
                     {
+                        /* New stack pages must read as zero; the frame
+                           allocator does not clear memory. The kernel runs
+                           identity-mapped, so clear the physical frame. */
+                        memset((void *)(uintptr_t)phys, 0, PAGE_SIZE);
                         if (vmm_map_page_in(t->mmu, page, phys,
                                             MMU_USER | MMU_WRITE | MMU_NX) == 0)
                         {

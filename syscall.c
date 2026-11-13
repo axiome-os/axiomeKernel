@@ -67,6 +67,44 @@ typedef uint64_t (*syscall_fn)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t)
    NULL / wild / unmapped pointer returns -EFAULT instead of faulting or being
    silently demand-mapped by the page-fault handler. */
 
+/* The user stack is demand-paged (only INITIAL_STACK_PAGES are mapped at
+   exec time, see elf.c). A kernel memcpy cannot take a user page fault, so
+   without this a syscall buffer that reaches into the not-yet-touched part of
+   the stack (e.g. `ls`'s multi-hundred-KB readdir buffer) would spuriously
+   fail with EFAULT. Grow the stack here exactly like the int-14 handler
+   would, but before the range check. */
+static int user_stack_fault_in(struct thread *t, uint64_t lo, uint64_t hi)
+{
+    if (!t || !t->mmu || !t->ustack_base || !t->ustack_top)
+        return 0;
+    if (hi <= t->ustack_base || lo >= t->ustack_top)
+        return 0;
+    if (lo < t->ustack_base)
+        lo = t->ustack_base;
+    if (hi > t->ustack_top)
+        hi = t->ustack_top;
+    lo &= ~(uint64_t)(PAGE_SIZE - 1);
+
+    for (uint64_t va = lo; va < hi; va += PAGE_SIZE)
+    {
+        if (vmm_virt_to_phys_in(t->mmu, va) != 0)
+            continue;
+        uint64_t phys = (uint64_t)pmm_alloc_frame();
+        if (!phys)
+            return -1;
+        /* Kernel memory is identity-mapped, so the physical frame can be
+           cleared directly (fresh stack pages must not leak old contents). */
+        memset((void *)(uintptr_t)phys, 0, PAGE_SIZE);
+        if (vmm_map_page_in(t->mmu, va, phys,
+                            MMU_USER | MMU_WRITE | MMU_NX) < 0)
+        {
+            pmm_free_frame((void *)(uintptr_t)phys);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int user_range_ok(uint64_t uptr, size_t n, int write)
 {
     if (n == 0)
@@ -79,6 +117,11 @@ int user_range_ok(uint64_t uptr, size_t n, int write)
     struct mmu_root *root = t ? t->mmu : 0;
     if (!root)
         root = vmm_kernel_root();
+    /* Fault in demand-paged stack pages covered by the request before
+       checking; otherwise a valid stack pointer below the initially mapped
+       window is reported as EFAULT. */
+    if (t && t->mmu)
+        user_stack_fault_in(t, uptr, uptr + n);
     return vmm_check_user_range(root, uptr, n, write);
 }
 

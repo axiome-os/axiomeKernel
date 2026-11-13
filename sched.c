@@ -250,6 +250,8 @@ struct thread *sched_spawn(void (*func)(void*), void *arg, const char *name)
     t->stack_base = stack;
     t->kstack_top = (uint64_t)stack + THREAD_STACK_SIZE;
     t->mmu = vmm_kernel_root();
+    t->ustack_base = 0;
+    t->ustack_top = 0;
     t->pid = sched_new_pid();
     t->parent_pid = 0;
     t->exit_status = 0;
