@@ -2,6 +2,8 @@
 #include "serial.h"
 #include "framebuffer.h"
 #include "printk.h"
+#include "debugmode.h"
+#include "splash.h"
 #include "vfs.h"
 #include "spinlock.h"
 #include "hal/cshim.h"
@@ -198,13 +200,27 @@ static void put_serial(char c)
     ring_append(c);
 }
 
+/* printk's pixel sink: the framebuffer is only a kernel-log console in
+   debug mode (axboot.cfg debug=1).  When it is off, boot logs stay on the
+   serial port and in the kernel log, while the splash stays on screen. */
+static void put_printk(char c)
+{
+    serial_putchar(COM1, c);
+    ring_append(c);
+    if (fb_active() && kernel_debug_fb())
+        fb_putchar(c);
+}
+
 void printk(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    emit(fmt, ap, console_putchar);
+    emit(fmt, ap, put_printk);
     va_end(ap);
-    fb_flush();
+    if (kernel_debug_fb())
+        fb_flush();
+    else
+        splash_note_log();
 }
 
 void klog(const char *fmt, ...)
@@ -267,6 +283,8 @@ void klog_flush(void)
 void kernel_panic(const char *msg)
 {
     hal_cpu_irq_disable();
+    /* A panic must be visible even when normal kernel logs are serial-only. */
+    kernel_debug_force_fb(1);
     printk("\n*** KERNEL PANIC ***\n%s\n", msg ? msg : "(no message)");
     klog("\n*** KERNEL PANIC ***\n%s\n", msg ? msg : "(no message)");
     for (;;)

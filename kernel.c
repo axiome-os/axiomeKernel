@@ -1,5 +1,7 @@
 #include "serial.h"
 #include "printk.h"
+#include "debugmode.h"
+#include "splash.h"
 #include "axboot.h"
 #include "framebuffer.h"
 #include "pmm.h"
@@ -71,6 +73,10 @@ void kmain(struct axboot_info *info)
     hal_init();
     serial_init(COM1);
 
+    /* Read debug/splash switches from the axboot kernel command line before
+       the first printk so debug mode applies to the whole boot. */
+    kernel_debug_init(info ? info->cmdline : "");
+
     printk("axiomeOS booting...\n");
 
     axboot_parse(info);
@@ -78,21 +84,24 @@ void kmain(struct axboot_info *info)
     pmm_init();
     vmm_init();
     fb_init_buffers();
+    /* Paint the logo + progress bar as soon as the back-buffer exists.  With
+       debug mode on this is a no-op so the framebuffer can be a log console. */
+    splash_show();
     acpi_init(acpi_rsdp_addr);
+    splash_set_progress(300);
 
     /* Boot environment as seen through the HAL (filled by the boot glue,
        e.g. mb2.c). */
     struct hal_bootinfo *bi = hal_bootinfo();
 
-    if (bi->framebuffer_present)
+    if (bi->framebuffer_present && kernel_debug_mode())
     {
-        fb_clear();
-        fb_write("Hello, axiomeOS!\n");
-        fb_write("Framebuffer active\n");
+        printk("Hello, axiomeOS!\n");
+        printk("Framebuffer active\n");
     }
-    else
+    else if (!bi->framebuffer_present)
     {
-        printk("No framebuffer available (use -vga std)\n");
+        printk("No framebuffer available\n");
     }
 
     void *p = pmm_alloc_frame();
@@ -157,6 +166,7 @@ void kmain(struct axboot_info *info)
         }
     }
     printk("--- Phase 4: memory test done ---\n");
+    splash_set_progress(360);
 
     tss_init();
     isr_init();
@@ -172,6 +182,7 @@ void kmain(struct axboot_info *info)
     tty_init();
     serial_init_input();
     mouse_init();
+    splash_set_progress(430);
 
     sched_init();
 
@@ -182,6 +193,7 @@ void kmain(struct axboot_info *info)
     procfs_init();
 
     pci_init();
+    splash_set_progress(500);
 
     /* Graphics stack: GOP is already live via fb_*; now register every
        display backend and let the manager pick the best one. Intel/Bochs
@@ -189,15 +201,18 @@ void kmain(struct axboot_info *info)
        as the scanout owner until native modeset lands. */
     gfx_init();
     printk("gfx: active='%s'\n", gfx_active_name());
+    splash_set_progress(580);
 
     /* Network stack init: mbuf pool, loopback, protocol handlers.
        Must come before driver_init() because e1000 probe needs mbufs. */
     net_init();
     socket_init();
+    splash_set_progress(650);
 
     driver_init();
     devfs_init();
     module_init_subsys();
+    splash_set_progress(720);
 
     fat32_automount();
 
@@ -213,13 +228,20 @@ void kmain(struct axboot_info *info)
         }
     }
     security_init();
+    splash_set_progress(820);
 
     klog_init_late();
+    splash_set_progress(880);
 
     uint64_t sys_ret = syscall_dispatch(SYS_PRINT, (uint64_t)"hello from syscall dispatch", 0, 0, 0, 0);
     printk("Syscall dispatch returned: %lu\n", sys_ret);
 
     exec_init_from_disk();
+    splash_set_progress(950);
+
+    /* Hand over a clean screen before IRQs are enabled, so the shell cannot
+       paint its first output on top of a splash that is about to be cleared. */
+    splash_hide();
 
     uint64_t yield_count = 0;
     printk("APIC: tick");
@@ -277,13 +299,6 @@ void kmain(struct axboot_info *info)
     rtc_sync_init();
 
     klog_flush();
-
-    /* Hand control to the shell with a clean framebuffer: the boot logs that
-       scrolled above are not kernel noise the user needs to see. Scheduler
-       bookkeeping is routed to klog() (serial + /var/log/kernel.log only), so the
-       running shell stays free of visual noise. */
-    if (fb_active())
-        fb_clear();
 
     sched_yield();
 
