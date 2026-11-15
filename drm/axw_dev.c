@@ -22,6 +22,7 @@
 
 struct axw_conn {
     int used;
+    int refs;               /* number of fds referencing this connection */
     int is_server;          /* first opener = compositor */
     uint32_t id;            /* connection id (1-based) */
     struct axw_msg_hdr rxq[AXW_QUEUE_DEPTH];
@@ -45,6 +46,13 @@ static struct axw_conn *conn_at(int index)
 struct axw_conn *axw_dev_conn_at(int index)
 {
     return conn_at(index);
+}
+
+void axw_dev_ref_conn(int index)
+{
+    struct axw_conn *c = conn_at(index);
+    if (c)
+        c->refs++;
 }
 
 long axw_dev_read_conn(struct axw_conn *c, void *buf, size_t len)
@@ -145,6 +153,7 @@ int axw_dev_open_conn(void)
             struct axw_conn *c = &g_conns[i];
             __builtin_memset(c, 0, sizeof(*c));
             c->used = 1;
+            c->refs = 1;
             c->id = (uint32_t)(i + 1);
             c->rx_head = 0;
             c->rx_tail = 0;
@@ -172,10 +181,10 @@ void axw_dev_close_conn(int conn_index)
     struct axw_conn *c = conn_at(conn_index);
     if (!c)
         return;
+    if (--c->refs > 0)
+        return; /* other fds still reference it */
     if (c->is_server && g_server_conn == conn_index)
-    {
         g_server_conn = -1;
-    }
     __builtin_memset(c, 0, sizeof(*c));
 }
 

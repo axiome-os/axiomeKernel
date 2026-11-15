@@ -6,6 +6,7 @@
 #include "vmm.h"
 #include "string.h"
 #include "hal/cshim.h"
+#include "drm/axw_dev.h"
 
 void context_switch(uint64_t *old_rsp, uint64_t new_rsp, uint64_t new_kstack_top);
 extern void user_iret_stub(void);
@@ -63,7 +64,10 @@ static void thread_ref_fd(struct vfs_file *f)
     if (!f->used || !f->node)
         return;
     if (f->kind == FD_VNODE)
+    {
         f->node->refcount++;
+        if (f->priv) axw_dev_ref_conn((int)(uintptr_t)f->priv - 1);
+    }
     else if (f->kind == FD_PIPE)
     {
         struct pipe *p = (struct pipe *)f->node->priv;
@@ -99,7 +103,10 @@ static void thread_close_fds(struct thread *t)
         if (!f->used)
             continue;
         if (f->kind == FD_VNODE)
+        {
+            if (f->priv) { axw_dev_close_conn((int)(uintptr_t)f->priv - 1); f->priv = 0; }
             vfs_release(f->node);
+        }
         else if (f->kind == FD_PIPE && f->node)
         {
             struct pipe *p = (struct pipe *)f->node->priv;

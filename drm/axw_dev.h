@@ -16,6 +16,9 @@ int axw_dev_open_conn(void);
 /* Get connection by index. */
 struct axw_conn *axw_dev_conn_at(int index);
 
+/* Increment the connection's reference count. */
+void axw_dev_ref_conn(int index);
+
 /* Called on close to clean up. */
 void axw_dev_close_conn(int conn_index);
 
