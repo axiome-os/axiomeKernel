@@ -234,11 +234,9 @@ bool DisplayManager::present_rect(const GfxRect &r)
 {
     if (!active_)
         return false;
-    // Use cpu_base clipping path: if backend supports partial present it would be wired;
-    // fallback to full present if rect covers most of screen.
-    active_->present();
-    (void)r;
-    return true;
+    /* Pass the dirty rect through to the backend; virtio-gpu transfers only
+       that rectangle. */
+    return active_->present_rect(r);
 }
 
 bool DisplayManager::flip(uint32_t resource_id)

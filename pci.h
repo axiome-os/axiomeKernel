@@ -55,4 +55,8 @@ struct pci_device *pci_first(void);
 /* Physical address of BAR `idx` (MMIO address or IO port). 0 if unimplemented. */
 uint64_t pci_bar_addr(const struct pci_device *p, int idx);
 
+/* Size of BAR `idx` in bytes, probed by the all-ones mask method. 0 if
+   unimplemented. The device must be quiescent (bus master not enabled). */
+uint64_t pci_bar_size(const struct pci_device *p, int idx);
+
 #endif

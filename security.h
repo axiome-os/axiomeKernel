@@ -97,6 +97,7 @@ extern const uint64_t role_caps[NROLES];
 #define ENOTDIR  20
 #define EISDIR   21
 #define EINVAL   22
+#define ENODEV   19
 #define ENOTEMPTY 39
 #define ESPIPE   29
 #define ENOSYS   38

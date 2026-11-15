@@ -28,7 +28,11 @@ uint16_t pci_read16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
     uint32_t addr = 0x80000000u | ((uint32_t)bus << 16) |
                     ((uint32_t)dev << 11) | ((uint32_t)func << 8) | (off & 0xFFFC);
     outl(PCI_ADDR_PORT, addr);
-    return (uint16_t)inw(PCI_DATA_PORT);
+    uint16_t data = (uint16_t)inw(PCI_DATA_PORT);
+    /* Offset 0x02/0x06/... refers to the upper half of the dword. */
+    if (off & 2)
+        data >>= 8;
+    return data;
 }
 
 void pci_write16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint16_t val)
@@ -36,7 +40,11 @@ void pci_write16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint16_t v
     uint32_t addr = 0x80000000u | ((uint32_t)bus << 16) |
                     ((uint32_t)dev << 11) | ((uint32_t)func << 8) | (off & 0xFFFC);
     outl(PCI_ADDR_PORT, addr);
-    outw(PCI_DATA_PORT, val);
+    uint16_t cur = (uint16_t)inw(PCI_DATA_PORT);
+    if (off & 2)
+        outw(PCI_DATA_PORT, (uint16_t)((cur & 0x00FF) | (uint16_t)(val << 8)));
+    else
+        outw(PCI_DATA_PORT, (uint16_t)((cur & 0xFF00) | val));
 }
 
 uint8_t pci_read8(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
@@ -169,4 +177,29 @@ uint64_t pci_bar_addr(const struct pci_device *p, int idx)
         return (((uint64_t)hi) << 32) | (uint64_t)(raw & 0xFFFFFFF0);
     }
     return (uint64_t)(raw & 0xFFFFFFF0);
+}
+
+/* Probe the size of BAR `idx` by writing all-ones and reading back the
+   size mask, then restoring the original BAR value. Returns the size in
+   bytes, or 0 if the BAR is unimplemented. Call only while the device is
+   quiescent (e.g. during probe, before bus master is enabled). */
+uint64_t pci_bar_size(const struct pci_device *p, int idx)
+{
+    if (idx < 0 || idx > 5)
+        return 0;
+    uint32_t raw = p->bar[idx];
+    if (raw == 0)
+        return 0;
+    int reg = 0x10 + idx * 4;
+    uint32_t orig = pci_read32(p->bus, p->dev, p->func, reg);
+    pci_write32(p->bus, p->dev, p->func, reg, 0xFFFFFFFFu);
+    uint32_t mask = pci_read32(p->bus, p->dev, p->func, reg);
+    pci_write32(p->bus, p->dev, p->func, reg, orig);
+    if (raw & 1) {
+        /* I/O bar: 16-bit size field. */
+        mask &= 0xFFFC;
+        return (~mask + 1) & 0xFFFFu;
+    }
+    mask &= 0xFFFFFFF0;
+    return (~mask + 1ULL);
 }

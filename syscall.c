@@ -323,7 +323,13 @@ static uint64_t sys_gfx_flip(uint64_t a1, uint64_t a2, uint64_t a3,
                              uint64_t a4, uint64_t a5)
 {
     (void)a2; (void)a3; (void)a4; (void)a5;
-    return (uint64_t)gfx_flip((uint32_t)a1);
+    uint32_t resource_id = (uint32_t)a1;
+    if (resource_id == 0)
+        return (uint64_t)-EINVAL;
+    /* Only the active virtio-gpu backend may repoint the scanout. */
+    if (!gfx_active_name() || strcmp(gfx_active_name(), "virtio-gpu") != 0)
+        return (uint64_t)-ENODEV;
+    return (uint64_t)gfx_flip(resource_id);
 }
 
 /* ---- ioctl ---- */

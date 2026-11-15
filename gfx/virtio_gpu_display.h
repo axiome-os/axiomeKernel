@@ -23,6 +23,7 @@ public:
                uint32_t src_pitch_px) override;
     void present() override;
     bool flip(uint32_t resource_id) override;
+    bool present_rect(const GfxRect &r) override;
     void *cpu_base() override { return fb_; }
     uint32_t fb_width() const override { return cur_.width; }
     uint32_t fb_height() const override { return cur_.height; }
@@ -30,9 +31,10 @@ public:
     PixelFormat fb_format() const override { return cur_.format; }
 
 private:
-    bool present_flush(void);
+    bool present_flush(const GfxRect &dirty);
     bool create_framebuffer_resource(void);
     bool setup_scanout(void);
+    void release_framebuffer(void);   /* unmap + free the backing; idempotent */
 
     bool ready_ = false;
     GfxMode cur_;
@@ -40,8 +42,9 @@ private:
     uint64_t fb_phys_ = 0;
     uint32_t fb_pages_ = 0;
     uint32_t fb_size_ = 0;
-    uint32_t fb_resource_id_ = 0;
-    uint32_t ctx_id_ = 0; /* virgl context for 3D */
+    uint32_t fb_resource_id_ = 0;      /* resource the CPU draws into (has backing) */
+    uint32_t scanout_resource_id_ = 0; /* resource currently on scanout */
+    uint32_t ctx_id_ = 0;              /* virgl context for 3D */
 };
 
 VirtioGpuDisplay *virtio_gpu_display_create(void);
