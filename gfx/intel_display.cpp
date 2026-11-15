@@ -43,7 +43,7 @@ bool IntelDisplay::init(const GfxMode & /*mode*/)
     /* Stage 1: deliberately refuse modeset. DisplayManager treats init()==
        false as "not ready" and falls through to the next backend (GOP),
        while probe()==true still advertises the hardware in logs and in
-       gfx caps for Mesa planning. Flip this to true once GTT + pipe
+       gfx caps for Aluminium planning. Flip this to true once GTT + pipe
        programming lands. */
     if (!found_)
         return false;

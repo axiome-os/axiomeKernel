@@ -1,11 +1,11 @@
-#ifndef AXIOME_GFX_MESA_ABI_H
-#define AXIOME_GFX_MESA_ABI_H
+#ifndef AXIOME_GFX_ALUMINIUM_ABI_H
+#define AXIOME_GFX_ALUMINIUM_ABI_H
 
-/* Minimal DRM-style ABI for the Mesa bring-up.
-   This is NOT a Linux DRM clone: it is the smallest surface Mesa's
+/* Minimal DRM-style ABI for Aluminium.
+   This is NOT a Linux DRM clone: it is the smallest surface Aluminium's
    platform layer needs (dumb buffers + present) on top of IDisplay.
    Keep this header freestanding (stdint only) so both kernel C++ and the
-   userspace Mesa platform patch can include it. */
+   userspace Aluminium backend can include it. */
 
 #include <stdint.h>
 

@@ -74,7 +74,7 @@ inline bool clip_rect(GfxRect &r, uint32_t width, uint32_t height)
 
 /* Acceleration capabilities: what a backend can do without CPU pixel
     pushing. GOP provides none; Intel provides blit/fill once GTT + engine
-    init lands. Mesa queries this to decide client vs GPU submission.
+    init lands. Aluminium queries this to decide client vs GPU submission.
 
     Capability flags (bitmask): each bit is one testable feature. The
     `GfxCaps` struct keeps a `bits` field as the single source of truth;

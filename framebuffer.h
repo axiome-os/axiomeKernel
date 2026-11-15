@@ -36,7 +36,7 @@ uint32_t fb_pitch(void);
 volatile void *fb_addr(void);
 
 /* CPU-visible staging buffer for the gfx abstraction (GopDisplay) and the
-   Mesa softpipe target. NULL until fb_init_buffers() succeeds. */
+   Aluminium software backend target. NULL until fb_init_buffers() succeeds. */
 uint8_t *fb_back_buffer_for_gfx(void);
 
 #ifdef __cplusplus

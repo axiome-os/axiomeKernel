@@ -47,8 +47,8 @@ public:
     /* Capability self-test: return false to mask that cap bit. */
     virtual bool test_cap(GfxCap cap) const { (void)cap; return true; }
 
-    /* Linear CPU mapping for software rasterizers (Mesa softpipe/llvmpipe
-       target) plus geometry for dumb-buffer allocation. */
+    /* Linear CPU mapping for software rasterizers (Aluminium software
+       backend target) plus geometry for dumb-buffer allocation. */
     virtual void *cpu_base() = 0;
     virtual uint32_t fb_width() const = 0;
     virtual uint32_t fb_height() const = 0;

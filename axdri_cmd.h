@@ -2,13 +2,13 @@
 #define AXIOME_AXDRI_CMD_H
 
 /* Write-channel command protocol for /Devices/dri0.
-   dev_ops has no ioctl slot, so Mesa's winsys speaks through write():
+   dev_ops has no ioctl slot, so the Aluminium backend speaks through write():
    one fixed-size command struct per call. GET_MODE is a plain read()
-   returning struct axdri_mode (see gfx/mesa_abi.h).
+   returning struct axdri_mode (see gfx/aluminium_abi.h).
    Freestanding (stdint only); included by kernel/dri.c AND host tests. */
 
 #include <stdint.h>
-#include "gfx/mesa_abi.h"
+#include "gfx/aluminium_abi.h"
 
 #define AXDRI_CMD_SIZE 32
 
@@ -76,8 +76,8 @@ static inline void axdri_encode_get_caps(struct axdri_cmd *c)
     c->args[5] = 0;
 }
 
-/* Pitch/size helpers shared by kernel/dri.c and the winsys (single source
-   of truth so Mesa and the kernel can never disagree on layout). */
+/* Pitch/size helpers shared by kernel/dri.c and the backend (single source
+   of truth so Aluminium and the kernel can never disagree on layout). */
 static inline uint32_t axdri_pitch_for(uint32_t w)
 {
     return w * 4u;

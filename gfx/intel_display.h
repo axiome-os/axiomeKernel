@@ -12,7 +12,7 @@ namespace gfx {
      without Intel graphics (probe returns false).
    Stage 2 (planned): GTT init, display-engine modeset, command submission
      for fill/blit, then has_hw_* flips on and priority beats GOP.
-   Keeping the stub in-tree now means Mesa and the manager already speak
+   Keeping the stub in-tree now means Aluminium and the manager already speak
    to an Intel object; enabling acceleration later touches only this file. */
 class IntelDisplay : public IDisplay {
 public:

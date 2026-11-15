@@ -11,6 +11,7 @@
 #include "input.h"
 #include "drm/drm.h"
 #include "drm/axw_dev.h"
+#include "aluminium.h"
 #include <stddef.h>
 
 static struct driver *g_drivers;
@@ -359,6 +360,9 @@ void driver_init(void)
 
     /* AXW display protocol device: /devices/axw0 */
     axw_dev_init();
+
+    /* Aluminium graphics API device: /devices/aluminium0 */
+    aluminium_init();
 
     /* Unified GUI input queue (keyboard + mouse for GUI clients). */
     input_init();
