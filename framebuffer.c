@@ -4,6 +4,9 @@
 #include "pmm.h"
 #include "input.h"
 #include <stddef.h>
+#include <string.h>
+
+#include "gfx/manager.h"
 
 static struct {
     volatile uint8_t *addr;
@@ -311,6 +314,56 @@ void fb_flush(void)
                          src_base + (size_t)y * fb.pitch + x_off,
                          row_bytes);
     fb_sfence();
+
+    /* When virtio-gpu owns the QEMU scanout (SET_SCANOUT already happened),
+       QEMU no longer reads the GOP BAR. The host only sees frames we push
+       with TRANSFER_TO_HOST_2D + RESOURCE_FLUSH, so mirror the dirty rect
+       into the guest backing (gfx_cpu_base) and present it.
+
+       present_flush() -> virtio_gpu_submit() can call printk() on a submit
+       failure, and printk -> fb_putchar() -> fb_flush(). Guard against that
+       re-entry so a submit error cannot recurse into the queue; a nested
+       call re-does the GOP mirror above but skips the virtio pass. */
+    static int virtio_nesting = 0;
+    if (gfx_active() && gfx_active_name() &&
+        strcmp(gfx_active_name(), "virtio-gpu") == 0 && !virtio_nesting)
+    {
+        virtio_nesting = 1;
+        void *vbase = gfx_cpu_base();
+        if (vbase)
+        {
+            uint32_t vw = 0, vh = 0, vpitch = 0, vbpp = 0;
+            gfx_mode(&vw, &vh, &vpitch, &vbpp);
+            if (vpitch == 0)
+                vpitch = fb.pitch;
+            /* Clamp to the virtio mode defensively; present_flush() re-clamps. */
+            uint32_t cw = w, ch = h;
+            if (x0 >= vw || y0 >= vh)
+            {
+                cw = 0;
+                ch = 0;
+            }
+            else
+            {
+                if (x0 + cw > vw)
+                    cw = vw - x0;
+                if (y0 + ch > vh)
+                    ch = vh - y0;
+            }
+            if (cw && ch)
+            {
+                uint8_t *vdst = (uint8_t *)vbase;
+                size_t rb = (size_t)cw * bpp_bytes;
+                size_t xo = (size_t)x0 * bpp_bytes;
+                for (uint32_t y = y0; y < y0 + ch; y++)
+                    __builtin_memcpy(vdst + (size_t)y * vpitch + xo,
+                                     src_base + (size_t)y * fb.pitch + xo,
+                                     rb);
+            }
+        }
+        gfx_present_rect(x0, y0, w, h);   /* TRANSFER+FLUSH; may printk -> re-enter */
+        virtio_nesting = 0;
+    }
 
     fb.dirty = 0;
     fb.dirty_w = 0;

@@ -178,21 +178,37 @@ static long drm_ioctl_page_flip(struct drm_file *file, void *arg)
     c->width = width;
     c->height = height;
 
-    /* GOP has no hardware flip: copy the GEM buffer contents to the scanout.
-       GEM phys is identity-mapped, so it is directly accessible as a kernel
-       virtual address. */
-    volatile uint8_t *scanout = (volatile uint8_t *)fb_addr();
     uint8_t *gem_px = (uint8_t *)(uintptr_t)gem->phys;
-    if (!scanout || !gem_px)
+    if (!gem_px)
         return -1;
     uint32_t bpp_bytes = 4; /* GOP is always 32bpp */
+
+    /* Where to present: GOP BAR while GOP owns the scanout; the virtio-gpu
+       guest backing (gfx_cpu_base) once virtio-gpu took SET_SCANOUT. That is
+       the DRI -> gfx connection: the compositor renders into a GEM scanout
+       buffer, page-flips it here, and we push it to the host with
+       TRANSFER+FLUSH instead of writing the now-detached GOP BAR. */
+    int is_virtio = gfx_active() && gfx_active_name() &&
+                    strcmp(gfx_active_name(), "virtio-gpu") == 0;
+    void *dest = (void *)fb_addr();
+    if (is_virtio)
+    {
+        void *vbase = gfx_cpu_base();
+        if (vbase)
+            dest = vbase;
+    }
+    if (!dest)
+        return -1;
     for (uint32_t y = 0; y < height; y++)
     {
-        __builtin_memcpy((void *)(scanout + (size_t)y * pitch),
+        __builtin_memcpy((uint8_t *)dest + (size_t)y * pitch,
                          gem_px + (size_t)y * pitch,
                          (size_t)width * bpp_bytes);
     }
     __asm__ volatile("sfence" ::: "memory");
+
+    if (is_virtio)
+        gfx_present_rect(0, 0, width, height);   /* TRANSFER+FLUSH to host */
     return 0;
 }
 

@@ -216,7 +216,9 @@ int gop_drm_init(void)
     struct drm_crtc *crtc = g_gop_dev->crtcs;
     drm_kms_mode_set(crtc, g_gop_fb, 0, 0);
 
-    printk("DRM: GOP KMS driver active (%ux%u pitch=%u)\n", w, h, pitch);
+    const char *backend = gfx_active_name() ? gfx_active_name() : "none";
+    printk("DRM: KMS driver active on '%s' (%ux%u pitch=%u)\n",
+           backend, w, h, pitch);
     return 0;
 }
 

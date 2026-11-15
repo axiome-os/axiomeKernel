@@ -195,10 +195,9 @@ void kmain(struct axboot_info *info)
     pci_init();
     splash_set_progress(500);
 
-    /* Graphics stack: GOP is already live via fb_*; now register every
-       display backend and let the manager pick the best one. Intel/Bochs
-       are probe-only stubs today, so this logs what PCI saw and keeps GOP
-       as the scanout owner until native modeset lands. */
+    /* Graphics stack: GOP is already live via fb_*. Intel/Bochs stay off.
+       virtio-gpu, when present, takes the QEMU scanout; fb_flush then
+       forwards dirty rects with TRANSFER+FLUSH. */
     gfx_init();
     printk("gfx: active='%s'\n", gfx_active_name());
     splash_set_progress(580);

@@ -34,6 +34,7 @@ private:
     bool present_flush(const GfxRect &dirty);
     bool create_framebuffer_resource(void);
     bool setup_scanout(void);
+    void copy_console_pixels(void);
     void release_framebuffer(void);   /* unmap + free the backing; idempotent */
 
     bool ready_ = false;

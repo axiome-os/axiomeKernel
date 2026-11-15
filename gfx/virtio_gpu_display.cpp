@@ -9,6 +9,7 @@ extern "C" {
 #include "../pmm.h"
 }
 #include "../vmm.h"
+#include "../framebuffer.h"
 
 namespace gfx {
 
@@ -202,6 +203,27 @@ bool VirtioGpuDisplay::setup_scanout(void)
     return true;
 }
 
+/* QEMU stops refreshing the GOP surface at SET_SCANOUT. Seed the new
+   resource from the console back-buffer first, when the modes match, so
+   the handoff is the current splash instead of the memset zeros. */
+void VirtioGpuDisplay::copy_console_pixels(void)
+{
+    uint8_t *src = fb_back_buffer_for_gfx();
+    if (!fb_ || !src || cur_.width == 0 || cur_.height == 0)
+        return;
+    if (cur_.pitch < cur_.width * 4)
+        return;
+    if (fb_width() != cur_.width || fb_height() != cur_.height)
+        return;
+    uint32_t src_pitch = fb_pitch();
+    uint32_t row = cur_.width * 4;
+    if (src_pitch < row)
+        return;
+    uint8_t *dst = (uint8_t *)fb_;
+    for (uint32_t y = 0; y < cur_.height; y++)
+        memcpy(dst + (size_t)y * cur_.pitch, src + (size_t)y * src_pitch, row);
+}
+
 bool VirtioGpuDisplay::init(const GfxMode &mode)
 {
     if (ready_)
@@ -258,11 +280,20 @@ bool VirtioGpuDisplay::init(const GfxMode &mode)
         virtio_gpu_cleanup(d);
         return false;
     }
+    /* Before SET_SCANOUT: the host may sample the resource as soon as it
+       becomes the scanout. Copy first so that sample is the live frame. */
+    copy_console_pixels();
     if (!setup_scanout()) {
         virtio_gpu_cleanup(d);       /* reset first: host must stop reading fb */
         release_framebuffer();
         return false;
     }
+
+    /* ready_ gates present_flush. Push the seeded frame now; the console
+       still draws the GOP back-buffer until select_best() publishes us. */
+    ready_ = true;
+    if (!present_flush(GfxRect{}))
+        printk("virtio-gpu: initial scanout flush failed\n");
 
     /* 3D: only advertise it if a virgl context AND a capset really exist. */
     if (d->has_virgl_3d && ctx_id_ == 0) {

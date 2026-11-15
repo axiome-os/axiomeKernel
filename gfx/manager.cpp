@@ -184,8 +184,13 @@ void DisplayManager::select_best()
         GfxMode want; /* zeros = keep firmware mode */
         if (!slots_[i]->init(want))
             continue;
-        if (!best || slots_[i]->priority() > best->priority())
+        if (!best || slots_[i]->priority() > best->priority()) {
             best = slots_[i];
+            /* Publish immediately so fb_flush follows a scanout that init()
+               just took over (virtio-gpu), instead of waiting until every
+               later backend has logged its probe. */
+            active_ = best;
+        }
     }
     active_ = best;
     if (active_) {
@@ -378,7 +383,9 @@ extern "C" void gfx_init(void)
           m.properties().disable_mask = gfx::GFX_DRIVER_INTEL | gfx::GFX_DRIVER_VIRTIO;
         Leave as-is for normal operation. */
     // m.properties().disable_drivers = true;
-    m.properties().disable_mask = gfx::GFX_DRIVER_VIRTIO | gfx::GFX_DRIVER_INTEL | gfx::GFX_DRIVER_BOCHS;
+    /* virtio-gpu owns the QEMU scanout when the device is present. Intel and
+       Bochs stay masked: their init() still refuses a modeset. */
+    m.properties().disable_mask = gfx::GFX_DRIVER_INTEL | gfx::GFX_DRIVER_BOCHS;
 
     /* Apply cmdline overrides (e.g. add "gfx.disable=virtio,intel" to
         bootloader cmdline) – runs before registration so select_best()
