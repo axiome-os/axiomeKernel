@@ -61,6 +61,7 @@ void driver_init(void);
    register them with the framework from driver_init(). */
 void sata_driver_init(void);
 void nvme_driver_init(void);
+void virtio_net_driver_init(void);
 
 /* DRM/KMS/GEM core (kernel/drm/drm.c). Wraps GOP as a KMS device,
    registers /dev/dri/card0. */

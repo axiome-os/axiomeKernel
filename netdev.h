@@ -27,11 +27,17 @@ struct netdev {
     uint32_t    mtu;
     netdev_tx_fn tx;         /* driver-supplied TX entry point */
     void       *priv;        /* driver-private data (e.g. e1000_softc) */
+    int         stopped;     /* TX queue stopped by the driver (flow control) */
     struct netdev *next;
 };
 
 /* Register a network device.  Returns 0 on success. */
 void netdev_register(struct netdev *dev);
+
+/* TX flow control: drivers call these to stop/wake the upper stack's TX
+   queue when the NIC ring is full / has drained. */
+void netdev_stop_queue(struct netdev *dev);
+void netdev_wake_queue(struct netdev *dev);
 
 /* Find a device by name (e.g. "eth0").  Returns NULL if not found. */
 struct netdev *netdev_find(const char *name);

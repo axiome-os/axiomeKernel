@@ -339,6 +339,7 @@ void driver_init(void)
     driver_register(&vga_drv);
     sata_driver_init();
     nvme_driver_init();
+    virtio_net_driver_init();
 
     /* Static character devices (no PCI dependence). */
     struct device *z = (struct device *)kmalloc(sizeof(struct device));

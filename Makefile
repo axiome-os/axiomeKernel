@@ -32,11 +32,11 @@ C_SRCS := $(wildcard *.c) $(wildcard arch/x86_64/*.c)
 # Built-in storage drivers: their sources live under modules/ but they link
 # into kernel.elf (not .kxt) and register via driver_init(). The define
 # switches their packaging tail from MODULE_INIT to *_driver_init().
-C_SRCS += modules/sata.c modules/nvme.c
+C_SRCS += modules/sata.c modules/nvme.c modules/virtio_net.c
 # DRM/KMS/GEM graphics subsystem (wraps GOP).
 C_SRCS += drm/drm.c drm/kms.c drm/gem.c drm/gop_drm.c drm/axw_dev.c
 $(BUILD_DIR)/drm/drm.o $(BUILD_DIR)/drm/kms.o $(BUILD_DIR)/drm/gem.o $(BUILD_DIR)/drm/gop_drm.o $(BUILD_DIR)/drm/axw_dev.o: CFLAGS += -Idrm
-$(BUILD_DIR)/modules/sata.o $(BUILD_DIR)/modules/nvme.o: CFLAGS += -DAXIOME_BUILTIN_DRIVER
+$(BUILD_DIR)/modules/sata.o $(BUILD_DIR)/modules/nvme.o $(BUILD_DIR)/modules/virtio_net.o: CFLAGS += -DAXIOME_BUILTIN_DRIVER
 CXX_SRCS := $(wildcard hal/*.cpp) $(wildcard arch/x86_64/hal/*.cpp) $(wildcard gfx/*.cpp)
 ASM_SRCS := $(wildcard arch/x86_64/*.S)
 C_OBJS := $(patsubst %.c, $(BUILD_DIR)/%.o, $(C_SRCS))

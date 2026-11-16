@@ -9,8 +9,10 @@
 #include "printk.h"
 #include "string.h"
 #include "slab.h"
+#include "spinlock.h"
 
 static struct netdev *g_netdevs;
+static spinlock_t g_netdev_queue_lock = SPINLOCK_INIT;
 
 /* Registered NIC poll functions (populated by modules such as e1000.kxt). */
 #define NET_POLL_MAX 8
@@ -89,6 +91,22 @@ struct netdev *netdev_up(void)
         if (d->ip != 0 && !netdev_is_loopback(d))
             return d;
     return 0;
+}
+
+void netdev_stop_queue(struct netdev *dev)
+{
+    if (!dev) return;
+    unsigned long flags = spin_lock_irq(&g_netdev_queue_lock);
+    dev->stopped = 1;
+    spin_unlock_irq(&g_netdev_queue_lock, flags);
+}
+
+void netdev_wake_queue(struct netdev *dev)
+{
+    if (!dev) return;
+    unsigned long flags = spin_lock_irq(&g_netdev_queue_lock);
+    dev->stopped = 0;
+    spin_unlock_irq(&g_netdev_queue_lock, flags);
 }
 
 /* Protocol layers expect a single contiguous buffer.  Drivers that DMA whole
