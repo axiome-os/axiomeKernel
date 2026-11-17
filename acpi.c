@@ -3,6 +3,8 @@
 #include "string.h"
 #include "io.h"
 
+#include <stddef.h>
+
 static struct acpi_rsdp *g_rsdp;
 static int g_revision;
 static struct acpi_madt *g_madt;
@@ -13,6 +15,10 @@ static uint32_t g_pm1b_cnt;
 static struct acpi_generic_address g_reset_reg;
 static int g_reset_present;
 static uint8_t g_reset_value;
+/* ACPI enable: smi_cmd port + acpi_enable byte (FACP offsets 56 / 57). */
+static uint32_t g_smi_cmd;
+static uint8_t  g_acpi_enable;
+static int g_acpi_enable_present;
 
 struct ioapic_info {
     uint64_t addr;
@@ -93,9 +99,28 @@ void acpi_init(void *rsdp_addr)
     g_rsdp = (struct acpi_rsdp *)rsdp_addr;
     if (__builtin_memcmp(g_rsdp->signature, "RSD PTR ", 8) != 0)
     {
-        printk("ACPI: bad RSDP signature\n");
-        g_rsdp = 0;
-        return;
+        printk("ACPI: bad RSDP signature at %p, scanning memory...\n", rsdp_addr);
+        /* Scan low memory (the traditional RSDP location on real PCs) for a
+           valid RSDP, in case the bootloader could not provide one. */
+        struct acpi_rsdp *found = 0;
+        for (uintptr_t base = 0; base < 0x100000; base += 16)
+        {
+            struct acpi_rsdp *cand = (struct acpi_rsdp *)(uintptr_t)base;
+            if (__builtin_memcmp(cand->signature, "RSD PTR ", 8) == 0)
+            {
+                found = cand;
+                break;
+            }
+        }
+        if (!found)
+        {
+            printk("ACPI: no valid RSDP found\n");
+            g_rsdp = 0;
+            return;
+        }
+        printk("ACPI: found RSDP at %p\n", found);
+        g_rsdp = found;
+        rsdp_addr = found;
     }
     g_revision = g_rsdp->revision;
     uint32_t rsdp_len = g_revision > 0 ? 36 : 20;
@@ -179,21 +204,37 @@ void acpi_init(void *rsdp_addr)
         printk("ACPI: %d IOAPIC(s), %d ISO(s)\n", g_ioapic_count, g_iso_count);
 
     /* Cache the power-control registers from the FACP so sys_reboot /
-       sys_poweroff do not need to re-walk the RSDT. */
+       sys_poweroff do not need to re-walk the RSDT. Firmware may provide an
+       older/smaller FACP than our struct, so check each field's offset +
+       size against header.length before reading it. */
     {
         struct acpi_fadt *fadt = (struct acpi_fadt *)acpi_find_table("FACP");
-        if (fadt && fadt->header.length >= sizeof(struct acpi_fadt))
+        if (fadt)
         {
-            g_pm1a_cnt = fadt->pm1a_cnt_blk;
-            g_pm1b_cnt = fadt->pm1b_cnt_blk;
-            if (fadt->reset_reg.address)
+            /* pm1a_cnt_blk (off 64, 4 bytes) + pm1b_cnt_blk (off 68, 4 bytes). */
+            if (fadt->header.length >= offsetof(struct acpi_fadt, pm1b_cnt_blk) + 4)
+            {
+                g_pm1a_cnt = fadt->pm1a_cnt_blk;
+                g_pm1b_cnt = fadt->pm1b_cnt_blk;
+            }
+            /* smi_cmd (off 56, 4 bytes) + acpi_enable (off 57, 1 byte). */
+            if (fadt->header.length >= offsetof(struct acpi_fadt, acpi_enable) + 1)
+            {
+                g_smi_cmd = fadt->smi_cmd;
+                g_acpi_enable = fadt->acpi_enable;
+                g_acpi_enable_present = 1;
+            }
+            /* reset_reg (off 116, 12 bytes) + reset_value (off 128, 1 byte). */
+            if (fadt->header.length >= offsetof(struct acpi_fadt, reset_reg) +
+                                          sizeof(struct acpi_generic_address))
             {
                 g_reset_reg = fadt->reset_reg;
                 g_reset_present = 1;
-                g_reset_value = fadt->reset_value;
+                if (fadt->header.length >= offsetof(struct acpi_fadt, reset_value) + 1)
+                    g_reset_value = fadt->reset_value;
             }
-            printk("ACPI: FACP pm1a_cnt=0x%x pm1b_cnt=0x%x%s\n",
-                   g_pm1a_cnt, g_pm1b_cnt,
+            printk("ACPI: FACP pm1a_cnt=0x%x pm1b_cnt=0x%x smi_cmd=0x%x acpi_enable=0x%x%s\n",
+                   g_pm1a_cnt, g_pm1b_cnt, g_smi_cmd, g_acpi_enable,
                    g_reset_present ? " reset_reg=yes" : "");
         }
         else
@@ -238,35 +279,81 @@ void acpi_reboot(void)
 }
 
 /* Program one PM1x counter register for sleep state S5 (power-off). Per the
-   ACPI spec we write SLP_TYP (bits 10-12, 7 = S5) with SLP_EN (bit 13) clear,
-   then set SLP_EN in a second write; the chipset latches and cuts power. The
-   SLP_TYP value lives in the firmware's _S5 AML, which we do not interpret —
-   QEMU (and most PC firmware) use 7, so this is best-effort on real hardware
-   and exact on QEMU. */
+   ACPI spec we write SLP_TYP (bits 10-12) with SLP_EN (bit 13) clear, then
+   set SLP_EN in a second write; the chipset latches and cuts power. The
+   SLP_TYP value for S5 comes from the firmware's _S5 AML — we do not
+   interpret AML, so we try every SLP_TYP value (0-7) in case the firmware's
+   S5 differs from 7. QEMU ignores S5 unless ACPI is enabled first
+   (SCI_EN + smi_cmd, see acpi_enable_acpi()). */
 static void acpi_program_s5(uint16_t port)
 {
     uint16_t val;
 
     if (!port)
         return;
-    val = inw(port);
-    val &= ~(uint16_t)(0x07u << 10);   /* clear SLP_TYP */
-    val |= (uint16_t)((0x07u & 0x07u) << 10);  /* S5 */
-    val &= ~(uint16_t)(1u << 13);      /* clear SLP_EN */
-    outw(port, val);
-    val |= (uint16_t)(1u << 13);       /* set SLP_EN -> go to S5 */
-    outw(port, val);
+    for (int slp_typ = 0; slp_typ < 8; slp_typ++)
+    {
+        val = inw(port);
+        val &= ~(uint16_t)((0x07u << 10) | (1u << 13)); /* clear SLP_TYP + SLP_EN */
+        val |= (uint16_t)((uint16_t)slp_typ << 10);     /* set SLP_TYP candidate */
+        outw(port, val);
+        acpi_pause();
+        val |= (uint16_t)(1u << 13);                    /* set SLP_EN */
+        outw(port, val);
+        acpi_pause();
+    }
+}
+
+/* Enable ACPI before touching PM1_CNT: write acpi_enable to smi_cmd (if the
+   FACP provides it), then set SCI_EN (bit 0) in PM1a_CNT/PM1b_CNT so the
+   chipset actually honours SLP_EN. QEMU ignores S5 unless ACPI is enabled. */
+static void acpi_enable_acpi(void)
+{
+    if (g_acpi_enable_present && g_smi_cmd)
+        outb((uint16_t)g_smi_cmd, g_acpi_enable);
+    acpi_pause();
+
+    if (g_pm1a_cnt)
+    {
+        uint16_t v = inw((uint16_t)g_pm1a_cnt);
+        v |= 1u;                       /* SCI_EN */
+        outw((uint16_t)g_pm1a_cnt, v);
+    }
+    if (g_pm1b_cnt)
+    {
+        uint16_t v = inw((uint16_t)g_pm1b_cnt);
+        v |= 1u;                       /* SCI_EN */
+        outw((uint16_t)g_pm1b_cnt, v);
+    }
+    acpi_pause();
 }
 
 void acpi_poweroff(void)
 {
     printk("ACPI: power-off requested\n");
 
+    /* 1. Enable ACPI before touching PM1_CNT: write acpi_enable to smi_cmd
+       (if the FACP provides it), then set SCI_EN (bit 0) in PM1a_CNT/
+       PM1b_CNT so the chipset actually honours SLP_EN. QEMU ignores S5
+       unless ACPI is enabled. */
+    acpi_enable_acpi();
+
+    /* 2. ACPI S5 on the FACP's PM1 control blocks. */
     if (g_pm1a_cnt)
         acpi_program_s5((uint16_t)g_pm1a_cnt);
     acpi_pause();
     if (g_pm1b_cnt)
         acpi_program_s5((uint16_t)g_pm1b_cnt);
+    acpi_pause();
+
+    /* 3. Some firmware (and QEMU) expose PM1_CNT at well-known ports that
+       differ from the FACP. Try the common QEMU/PIIX4 PM1a_CNT port. */
+    acpi_program_s5(0x8004);
+
+    /* 4. APM power-off: write 0x00 to port 0xb2. QEMU honours this directly
+       and needs no ACPI enable sequence. Try it last, before the reset
+       fallback, since it shares the smi_cmd port used in step 1. */
+    outb(0xB2, 0x00);
     acpi_pause();
 
     /* No ACPI power control (or firmware ignored us): degrade to a reset. */
