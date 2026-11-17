@@ -21,6 +21,7 @@
 
 #include "pci.h"
 #include "io.h"
+#include "idt.h"
 #include "hal/cshim.h"
 #include "printk.h"
 #include "string.h"
@@ -45,7 +46,9 @@
 #define VNET_RX_BUF_MRG       2048u  /* fixed Rx buffer size with MRG_RXBUF */
 #define IND_MAX                18u   /* indirect-table entries per head desc */
 
-#define VNET_MSI_VECTOR_BASE  0x30u  /* IDT vectors for MSI-X (cfg, rx, tx) */
+/* IDT vectors for MSI-X (cfg, rx, tx) plus one for the INTx fallback.
+   0x30-0x33 belong to xHCI, so keep virtio-net clear of them. */
+#define VNET_MSI_VECTOR_BASE  0x40u
 
 /* ---------------------------------------------------------------- *
  * Endianness / barriers                                              *
@@ -272,8 +275,6 @@ static int t_set_queue_vector(struct vnet_transport *t, uint16_t q,
 static int t_discover(struct vnet_transport *t)
 {
     struct pci_device *p = t->pdev;
-    /* Use pci_read32 (correct) rather than pci_read16, which is buggy for
-       odd offsets in this tree. */
     uint32_t id = pci_read32(p->bus, p->dev, p->func, PCI_VENDOR_ID);
     uint16_t vendor = (uint16_t)(id & 0xFFFFu);
     uint16_t did = (uint16_t)(id >> 16);
@@ -1214,10 +1215,20 @@ static void vnet_irq_config(void *ctx, void *frame);
 static void vnet_irq_queues(void *ctx, void *frame);
 static void vnet_irq_intx(void *ctx, void *frame);
 
+/* Clear the MSI-X enable bit so the device falls back to INTx. */
+static void vnet_msix_disable(struct vnet_transport *t)
+{
+    if (!t->msix_cap_pos) { t->msix_enabled = 0; return; }
+    uint16_t mc = t_cfg_read16(t->pdev, (uint16_t)(t->msix_cap_pos + 2));
+    t_cfg_write16(t->pdev, (uint16_t)(t->msix_cap_pos + 2),
+                  (uint16_t)(mc & (uint16_t)~(1u << 15)));
+    t->msix_enabled = 0;
+}
+
 static int vnet_msix_program(struct vnet *n)
 {
     struct vnet_transport *t = &n->tp;
-    if (!t->msix_cap_pos) return -1;
+    if (!t->msix_cap_pos) { printk("virtio-net: no MSI-X capability\n"); return -1; }
 
     struct pci_device *p = t->pdev;
     uint16_t mc = t_cfg_read16(p, (uint16_t)(t->msix_cap_pos + 2));
@@ -1225,10 +1236,15 @@ static int vnet_msix_program(struct vnet *n)
     uint32_t to = t_cfg_read32(p, (uint16_t)(t->msix_cap_pos + 4));
     int tbir = (int)(to & 0x7u);
     uint64_t tbase = (pci_bar_addr(p, tbir) & ~0xFULL) +
-                     (uint64_t)(to & ~0x7FULL);
+                     (uint64_t)(to & ~0x7ULL);
     volatile uint8_t *tb = (volatile uint8_t *)hal_mmio_map_phys(
         tbase, (size_t)table_size * MSIX_TABLE_ENTRY_BYTES);
-    if (!tb) return -1;
+    if (!tb)
+    {
+        printk("virtio-net: MSI-X table map failed (bar%d off=0x%x)\n",
+               tbir, (unsigned int)(to & ~0x7u));
+        return -1;
+    }
 
     /* Vectors: 0=config, 1=rx, 2=tx at IDT base VNET_MSI_VECTOR_BASE. */
     uint8_t vec[3] = {
@@ -1249,15 +1265,31 @@ static int vnet_msix_program(struct vnet *n)
     }
     vio_mb();
 
-    /* Enable MSI-X: table size field preserved, function mask clear, enable set. */
-    t_cfg_write16(p, (uint16_t)(t->msix_cap_pos + 2),
-                  (uint16_t)((mc & 0x7FFu) | (1u << 13)));
+    /* Install IDT gates and handlers before the device can raise anything. */
+    extern void isr_vnet0(void), isr_vnet1(void), isr_vnet2(void);
+    idt_set_gate(vec[0], (uintptr_t)isr_vnet0, 0x8E, 0);
+    idt_set_gate(vec[1], (uintptr_t)isr_vnet1, 0x8E, 0);
+    if (vec[2] != vec[1])
+        idt_set_gate(vec[2], (uintptr_t)isr_vnet2, 0x8E, 0);
 
-    /* Register handlers. */
     if (hal_irq_register(vec[0], vnet_irq_config, n) != 0) return -1;
     if (hal_irq_register(vec[1], vnet_irq_queues, n) != 0) return -1;
     if (vec[2] != vec[1])
         if (hal_irq_register(vec[2], vnet_irq_queues, n) != 0) return -1;
+
+    /* Enable MSI-X: preserve table size, clear function mask, set bit 15.
+       Bit 14 (function mask) and the reserved bits are zeroed by the mask. */
+    t_cfg_write16(p, (uint16_t)(t->msix_cap_pos + 2),
+                  (uint16_t)((mc & 0x7FFu) | (1u << 15)));
+    uint16_t mc_after = t_cfg_read16(p, (uint16_t)(t->msix_cap_pos + 2));
+    if (!(mc_after & (1u << 15)))
+    {
+        printk("virtio-net: MSI-X enable did not stick (mc=0x%x)\n", mc_after);
+        hal_irq_unregister(vec[0]);
+        hal_irq_unregister(vec[1]);
+        if (vec[2] != vec[1]) hal_irq_unregister(vec[2]);
+        return -1;
+    }
 
     t->msix_enabled = 1;
     return 0;
@@ -1268,6 +1300,7 @@ static void vnet_irq_config(void *ctx, void *frame)
     struct vnet *n = (struct vnet *)ctx;
     (void)frame;
     n->cfg_changed = 1;
+    hal_irq_eoi();
 }
 
 static void vnet_irq_queues(void *ctx, void *frame)
@@ -1277,6 +1310,7 @@ static void vnet_irq_queues(void *ctx, void *frame)
     (void)frame;
     flags = spin_lock_irq(&n->rxq.lock); vq_disable_cb(&n->rxq); spin_unlock_irq(&n->rxq.lock, flags);
     flags = spin_lock_irq(&n->txq.lock); vq_disable_cb(&n->txq); spin_unlock_irq(&n->txq.lock, flags);
+    hal_irq_eoi();
 }
 
 static void vnet_irq_intx(void *ctx, void *frame)
@@ -1286,13 +1320,14 @@ static void vnet_irq_intx(void *ctx, void *frame)
     uint8_t isr;
     (void)frame;
     isr = t_read_isr(&n->tp);
-    if (isr == 0) return;  /* not our interrupt */
     if (isr & 2) { n->cfg_changed = 1; }
     if (isr & 1)
     {
         flags = spin_lock_irq(&n->rxq.lock); vq_disable_cb(&n->rxq); spin_unlock_irq(&n->rxq.lock, flags);
         flags = spin_lock_irq(&n->txq.lock); vq_disable_cb(&n->txq); spin_unlock_irq(&n->txq.lock, flags);
     }
+    /* Always EOI: the vector is in service even when the ISR byte is zero. */
+    hal_irq_eoi();
 }
 
 /* ---------------------------------------------------------------- *
@@ -1378,17 +1413,23 @@ static int vnet_bringup(struct vnet *n)
     }
     vq_disable_cb(&n->cvq);  /* control queue is polled */
 
-    /* Bind MSI-X vectors to queues. */
+    /* Bind MSI-X vectors to queues.  These registers take an MSI-X table
+       entry index (0..table_size-1), not an IDT vector; the table entries
+       programmed above carry the actual IDT vectors. */
     if (t->msix_enabled)
     {
-        if (t_set_config_vector(t,
-                (uint16_t)(VNET_MSI_VECTOR_BASE + 0)) < 0 ||
-            t_set_queue_vector(t, 0,
-                (uint16_t)(VNET_MSI_VECTOR_BASE + 1)) < 0 ||
-            t_set_queue_vector(t, 1,
-                (uint16_t)(VNET_MSI_VECTOR_BASE + 2)) < 0)
+        int rc_cfg = t_set_config_vector(t, 0);
+        int rc_rx = t_set_queue_vector(t, 0, 1);
+        int rc_tx = t_set_queue_vector(t, 1, 2);
+        if (rc_cfg < 0 || rc_rx < 0 || rc_tx < 0)
         {
-            t->msix_enabled = 0;
+            /* No queue vectors => no interrupts. Drop MSI-X so the INTx
+               fallback below carries the queues instead. */
+            hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 0));
+            hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 1));
+            hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 2));
+            vnet_msix_disable(t);
+            t->cfg_window = 0x14;
         }
     }
 
@@ -1419,13 +1460,18 @@ static int vnet_bringup(struct vnet *n)
     /* Install interrupt handlers (device still stopped; no events lost). */
     if (!t->msix_enabled)
     {
-        /* INTx: route PCI IRQ via IOAPIC and register handler. */
+        /* INTx: route PCI IRQ via IOAPIC and register handler.  Install the
+           gate and handler while the line is still masked so a pending INTx
+           can never land on an unhandled (non-EOI'ing) vector. */
         uint8_t irq = t->pdev->irq;
+        uint8_t vec = (uint8_t)(VNET_MSI_VECTOR_BASE + 3);
         if (irq && irq != 0xFF)
         {
-            ioapic_set_entry(irq, (uint8_t)(VNET_MSI_VECTOR_BASE + 3), 0, 0);
-            hal_irq_register((uint8_t)(VNET_MSI_VECTOR_BASE + 3),
-                             vnet_irq_intx, n);
+            extern void isr_vnet3(void);
+            idt_set_gate(vec, (uintptr_t)isr_vnet3, 0x8E, 0);
+            ioapic_set_entry(irq, vec, 0, 1);
+            if (hal_irq_register(vec, vnet_irq_intx, n) == 0)
+                ioapic_set_entry(irq, vec, 0, 0);
         }
     }
 
@@ -1467,6 +1513,8 @@ static void vnet_teardown(struct vnet *n)
     /* Quiesce interrupt handlers. */
     if (t->msix_enabled)
     {
+        /* Disable MSI-X before dropping the handlers. */
+        vnet_msix_disable(t);
         hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 0));
         hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 1));
         hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 2));
@@ -1475,7 +1523,10 @@ static void vnet_teardown(struct vnet *n)
     {
         uint8_t irq = t->pdev->irq;
         if (irq && irq != 0xFF)
+        {
+            ioapic_mask(irq, 1);
             hal_irq_unregister((uint8_t)(VNET_MSI_VECTOR_BASE + 3));
+        }
     }
 
     /* Complete every Tx still owned by the device. */

@@ -28,7 +28,7 @@ struct axw_conn {
     struct axw_msg_hdr rxq[AXW_QUEUE_DEPTH];
     uint32_t rx_args[AXW_QUEUE_DEPTH][AXW_MAX_ARGS];
     uint8_t rx_payload[AXW_QUEUE_DEPTH][AXW_MAX_ARGS * 4];
-    int rx_head, rx_tail, rx_count;
+    int rx_tail, rx_count;  /* read cursor + queued message count */
     spinlock_t lock;
 };
 
@@ -104,7 +104,12 @@ long axw_dev_write_conn(struct axw_conn *c, const void *buf, size_t len)
             unsigned long f2 = spin_lock_irq(&t->lock);
             if (t->rx_count < AXW_QUEUE_DEPTH)
             {
-                int idx = (t->rx_head + t->rx_count) % AXW_QUEUE_DEPTH;
+                /* Index relative to the read cursor. There is no separate
+                   write cursor: the slot after the last queued message is
+                   always (rx_tail + rx_count). Using a fixed base instead
+                   makes the writer desynchronise from rx_tail as soon as
+                   the queue drains once. */
+                int idx = (t->rx_tail + t->rx_count) % AXW_QUEUE_DEPTH;
                 __builtin_memcpy(&t->rxq[idx], h, sizeof(*h));
                 size_t args_size = (size_t)(total - 8u);
                 if (args_size > 0)
@@ -128,7 +133,7 @@ long axw_dev_write_conn(struct axw_conn *c, const void *buf, size_t len)
         unsigned long f2 = spin_lock_irq(&srv->lock);
         if (srv->rx_count < AXW_QUEUE_DEPTH)
         {
-            int idx = (srv->rx_head + srv->rx_count) % AXW_QUEUE_DEPTH;
+            int idx = (srv->rx_tail + srv->rx_count) % AXW_QUEUE_DEPTH;
             __builtin_memcpy(&srv->rxq[idx], h, sizeof(*h));
             size_t args_size = (size_t)(total - 8u);
             if (args_size > 0)
@@ -155,7 +160,6 @@ int axw_dev_open_conn(void)
             c->used = 1;
             c->refs = 1;
             c->id = (uint32_t)(i + 1);
-            c->rx_head = 0;
             c->rx_tail = 0;
             c->rx_count = 0;
             c->lock.locked = 0;

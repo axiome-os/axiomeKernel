@@ -137,3 +137,28 @@ isr_xhci3:
     push 0
     push 0x33
     jmp isr_common
+
+/* virtio-net MSI-X (cfg/rx/tx) and INTx vectors. */
+.global isr_vnet0
+isr_vnet0:
+    push 0
+    push 0x40
+    jmp isr_common
+
+.global isr_vnet1
+isr_vnet1:
+    push 0
+    push 0x41
+    jmp isr_common
+
+.global isr_vnet2
+isr_vnet2:
+    push 0
+    push 0x42
+    jmp isr_common
+
+.global isr_vnet3
+isr_vnet3:
+    push 0
+    push 0x43
+    jmp isr_common

@@ -28,11 +28,10 @@ uint16_t pci_read16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
     uint32_t addr = 0x80000000u | ((uint32_t)bus << 16) |
                     ((uint32_t)dev << 11) | ((uint32_t)func << 8) | (off & 0xFFFC);
     outl(PCI_ADDR_PORT, addr);
-    uint16_t data = (uint16_t)inw(PCI_DATA_PORT);
-    /* Offset 0x02/0x06/... refers to the upper half of the dword. */
-    if (off & 2)
-        data >>= 8;
-    return data;
+    /* Configuration cycles are dword-based and inw() only ever returns the
+       low half of the dword, so read the full dword and select the half. */
+    uint32_t data = inl(PCI_DATA_PORT);
+    return (uint16_t)(data >> ((off & 2) * 8));
 }
 
 void pci_write16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint16_t val)
@@ -40,11 +39,11 @@ void pci_write16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint16_t v
     uint32_t addr = 0x80000000u | ((uint32_t)bus << 16) |
                     ((uint32_t)dev << 11) | ((uint32_t)func << 8) | (off & 0xFFFC);
     outl(PCI_ADDR_PORT, addr);
-    uint16_t cur = (uint16_t)inw(PCI_DATA_PORT);
-    if (off & 2)
-        outw(PCI_DATA_PORT, (uint16_t)((cur & 0x00FF) | (uint16_t)(val << 8)));
-    else
-        outw(PCI_DATA_PORT, (uint16_t)((cur & 0xFF00) | val));
+    uint32_t data = inl(PCI_DATA_PORT);
+    uint32_t shift = (off & 2) * 8;
+    data &= ~(0xFFFFu << shift);
+    data |= (uint32_t)val << shift;
+    outl(PCI_DATA_PORT, data);
 }
 
 uint8_t pci_read8(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
