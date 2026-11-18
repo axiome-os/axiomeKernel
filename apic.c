@@ -226,13 +226,12 @@ uint64_t apic_get_ticks_per_ms(void)
     return ticks_per_ms;
 }
 
-/* Convert a raw tick count to nanoseconds using the calibrated ratio. */
+/* Convert a raw tick count to nanoseconds using the calibrated ratio.
+   (ticks * ns_per_tick_scaled) >> 20 overflows once ticks reaches ~2^24
+   (about 4.9 h at 1 kHz), so split the count instead: the high part is
+   multiplied exactly, the low 20-bit part cannot overflow. */
 uint64_t apic_ticks_to_ns(uint64_t ticks)
 {
-    /* (ticks * ns_per_tick_scaled) >> 20 */
-    /* Split to avoid 128-bit overflow: ticks * (ns_per_tick_scaled >> 10)
-       then >> 10.  ns_per_tick_scaled is at most ~1e9 * 2^20 / 1 < 2^50,
-       so ticks up to ~2^14 are safe with direct multiply.  For larger
-       tick counts we use the split form. */
-    return (ticks * ns_per_tick_scaled) >> 20;
+    uint64_t hi = ticks >> 20, lo = ticks & 0xFFFFF;
+    return hi * ns_per_tick_scaled + ((lo * ns_per_tick_scaled) >> 20);
 }

@@ -7,8 +7,9 @@
 extern "C" {
 #endif
 
-/* Initialise the kernel wall-clock.  Must be called after hal_cpu_irq_enable()
-   so that apic_get_ticks() is already incrementing.
+/* Initialise the kernel wall-clock.  Monotonic time is derived from the TSC,
+   calibrated against the PIT here, so the APIC timer interrupt does not have
+   to be running yet (it is still used as the pre-init fallback).
    boot_unix    : Unix timestamp (UTC seconds since epoch) at boot.
    tz_offset_sec: seconds east of UTC (e.g. +10800 for UTC+3). */
 void clock_init(uint64_t boot_unix, int64_t tz_offset_sec);
